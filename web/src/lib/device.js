@@ -26,6 +26,10 @@ export function resolveDeviceToken({ search, storage } = {}) {
   const fromUrl = (params.get('token') ?? '').trim();
   if (fromUrl) {
     write(store, fromUrl);
+    // Take it out of the address bar straight away: a token left in the URL
+    // ends up in browser history and in the Referer header of any outbound
+    // link. It is sent as a header on every request from here on.
+    stripQueryParam('token');
     return fromUrl;
   }
 
@@ -82,5 +86,29 @@ function safeSessionStorage() {
     return globalThis.sessionStorage ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Remove one query parameter from the address bar without reloading or adding
+ * a history entry. Used to get credentials out of the URL the moment they have
+ * been read.
+ *
+ * @param {string} name
+ */
+export function stripQueryParam(name) {
+  const { history, location } = globalThis;
+  if (typeof history?.replaceState !== 'function' || !location) return;
+
+  try {
+    const url = new URL(location.href);
+    if (!url.searchParams.has(name)) return;
+    url.searchParams.delete(name);
+    // replaceState, not pushState: the URL carrying the credential should not
+    // remain reachable with the back button.
+    history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // Sandboxed iframes can refuse replaceState. The credential still works;
+    // it just stays visible in that one URL.
   }
 }

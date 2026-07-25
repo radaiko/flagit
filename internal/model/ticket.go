@@ -110,5 +110,6 @@ type App struct {
 const (
 	SettingGlobalAutoProcess = "global_auto_process"
 	SettingHermesWebhookURL  = "hermes_webhook_url"
-	SettingAdminKey          = "admin_key"
+	// SettingAdminKeyHash holds the SHA-256 of the admin key, never the key.
+	SettingAdminKeyHash = "admin_key_hash"
 )

@@ -10,6 +10,7 @@
   import { untrack } from 'svelte';
   import { t, detectLanguage, rememberLanguage } from '../lib/i18n.js';
   import { createAdminClient } from '../lib/api.js';
+  import { stripQueryParam } from '../lib/device.js';
   import LanguageToggle from '../lib/LanguageToggle.svelte';
   import Login from './Login.svelte';
   import TicketList from './TicketList.svelte';
@@ -38,16 +39,20 @@
   }
 
   function readStoredKey() {
-    // An admin arriving from a link can pass the key once; it is then kept in
-    // session storage so it is not left sitting in the address bar.
+    // An admin arriving from a link can pass the key once. It moves into
+    // session storage and is stripped from the URL immediately: a key left in
+    // the address bar lands in browser history and in the Referer header of
+    // any outbound link, and it grants access to every ticket in the system.
     try {
       const fromUrl = new URLSearchParams(globalThis.location?.search ?? '').get('admin');
       if (fromUrl) {
         sessionStorage.setItem(KEY_STORAGE, fromUrl);
+        stripQueryParam('admin');
         return fromUrl;
       }
       return sessionStorage.getItem(KEY_STORAGE);
     } catch {
+      stripQueryParam('admin');
       return null;
     }
   }

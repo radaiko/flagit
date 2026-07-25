@@ -68,7 +68,11 @@ func newHarness(t *testing.T) *harness {
 	svc := service.New(database, hook, "https://flagit.example", slog.New(slog.DiscardHandler))
 	svc.Dispatch = func(fn func()) { fn() }
 
-	srv := NewServer(svc, testAdminKey, slog.New(slog.DiscardHandler))
+	// The server only ever holds the hash; callers still send the real key.
+	srv := NewServer(svc, db.HashAdminKey(testAdminKey), slog.New(slog.DiscardHandler))
+	// Keep the limiter middleware in the chain but out of the way: these tests
+	// exercise behaviour, not throttling. TestRateLimit* cover the limiter.
+	srv.CreateLimiter = NewRateLimiter(100000, time.Minute)
 	return &harness{Server: srv, public: srv.PublicRouter(), internal: srv.InternalRouter(), hook: hook}
 }
 

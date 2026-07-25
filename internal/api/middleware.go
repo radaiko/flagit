@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"flagit/internal/db"
 )
 
 // HeaderAdminKey authenticates internal API callers.
@@ -58,7 +60,7 @@ func (s *Server) RequestLogger(next http.Handler) http.Handler {
 // configured the middleware fails closed: an unset key must never mean "open".
 func (s *Server) AdminKeyAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.AdminKey == "" {
+		if s.AdminKeyHash == "" {
 			s.writeError(w, http.StatusServiceUnavailable, "admin key is not configured")
 			return
 		}
@@ -70,10 +72,15 @@ func (s *Server) AdminKeyAuth(next http.Handler) http.Handler {
 	})
 }
 
-// validAdminKey compares in constant time so the key cannot be recovered by
+// validAdminKey hashes the presented key and compares it against the stored
+// hash in constant time, so neither the key nor its hash can be recovered by
 // timing repeated guesses.
 func (s *Server) validAdminKey(provided string) bool {
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(s.AdminKey)) == 1
+	hash := db.HashAdminKey(provided)
+	if hash == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(hash), []byte(s.AdminKeyHash)) == 1
 }
 
 // adminKeyFrom reads the admin key from X-Admin-Key, falling back to a bearer
@@ -89,13 +96,15 @@ func adminKeyFrom(r *http.Request) string {
 	return ""
 }
 
-// deviceTokenFrom reads the ownership token from the header, falling back to a
-// query parameter for overlay links opened directly in a browser.
+// deviceTokenFrom reads the ownership token from its header.
+//
+// Header only, deliberately. A token in the query string would be written to
+// every access log, kept in browser history, and forwarded in the Referer
+// header of any outbound link — and this token is the sole credential for a
+// ticket. The overlay still accepts ?token= from a host app on load, but it
+// strips it from the URL and sends it as a header from then on.
 func deviceTokenFrom(r *http.Request) string {
-	if token := strings.TrimSpace(r.Header.Get(HeaderDeviceToken)); token != "" {
-		return token
-	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
+	return strings.TrimSpace(r.Header.Get(HeaderDeviceToken))
 }
 
 // RequireDeviceToken rejects public requests that carry no ownership token.

@@ -3,6 +3,8 @@ package webhook
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -135,7 +137,7 @@ func TestSendGivesUpAfterMaxAttempts(t *testing.T) {
 	assert.Len(t, *delays, 2, "no backoff after the final attempt")
 }
 
-func TestSend4xxIsNotRetriedForever(t *testing.T) {
+func TestSend4xxIsNotRetried(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -143,9 +145,69 @@ func TestSend4xxIsNotRetriedForever(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, _ := newTestSender(t)
-	assert.Error(t, s.Send(context.Background(), srv.URL, PayloadFor(testTicket(), "")))
-	assert.Equal(t, int32(DefaultMaxAttempts), calls.Load())
+	s, delays := newTestSender(t)
+	err := s.Send(context.Background(), srv.URL, PayloadFor(testTicket(), ""))
+
+	// Hermes understood the request and rejected it. Resending the identical
+	// body cannot change that answer, so retrying only delays the error.
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "webhook rejected")
+	assert.ErrorContains(t, err, "HTTP 404")
+	assert.Equal(t, int32(1), calls.Load(), "one attempt, no retries")
+	assert.Empty(t, *delays, "no backoff for a permanent failure")
+}
+
+func TestSendRetriesTransientClientErrors(t *testing.T) {
+	// 408 and 429 are 4xx, but both explicitly invite the caller back.
+	for _, status := range []int{http.StatusRequestTimeout, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(status)
+			}))
+			defer srv.Close()
+
+			s, _ := newTestSender(t)
+			assert.Error(t, s.Send(context.Background(), srv.URL, PayloadFor(testTicket(), "")))
+			assert.Equal(t, int32(DefaultMaxAttempts), calls.Load())
+		})
+	}
+}
+
+func TestStatusErrorPermanent(t *testing.T) {
+	tests := []struct {
+		status    int
+		permanent bool
+	}{
+		{http.StatusBadRequest, true},
+		{http.StatusUnauthorized, true},
+		{http.StatusNotFound, true},
+		{http.StatusUnprocessableEntity, true},
+		{http.StatusRequestTimeout, false},
+		{http.StatusTooManyRequests, false},
+		{http.StatusInternalServerError, false},
+		{http.StatusBadGateway, false},
+		{http.StatusServiceUnavailable, false},
+	}
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			err := &StatusError{StatusCode: tt.status}
+
+			assert.Equal(t, tt.permanent, err.Permanent())
+			assert.Equal(t, !tt.permanent, isRetryable(err))
+			assert.Contains(t, err.Error(), fmt.Sprint(tt.status))
+		})
+	}
+}
+
+func TestIsRetryableTreatsTransportErrorsAsTransient(t *testing.T) {
+	// DNS, TLS and connection resets are worth another attempt.
+	assert.True(t, isRetryable(errors.New("connection reset by peer")))
+	assert.True(t, isRetryable(fmt.Errorf("wrapped: %w", errors.New("dial tcp: timeout"))))
+
+	// A wrapped StatusError is still recognised through the chain.
+	assert.False(t, isRetryable(fmt.Errorf("wrapped: %w", &StatusError{StatusCode: 400})))
 }
 
 func TestSendUnreachableHost(t *testing.T) {

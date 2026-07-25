@@ -209,14 +209,14 @@ func TestPollTickets(t *testing.T) {
 	second := newTicket("notes")
 	require.NoError(t, d.CreateTicket(second))
 
-	changed, err := d.PollTickets(cutoff)
+	changed, err := d.PollTickets(cutoff, 100)
 	require.NoError(t, err)
 	require.Len(t, changed, 1)
 	assert.Equal(t, second.ID, changed[0].ID)
 
 	// An update to an older ticket brings it back into the poll window.
 	require.NoError(t, d.UpdateTicketStatus(first.ID, model.StatusInProgress, ""))
-	changed, err = d.PollTickets(cutoff)
+	changed, err = d.PollTickets(cutoff, 100)
 	require.NoError(t, err)
 	require.Len(t, changed, 2)
 	assert.Equal(t, second.ID, changed[0].ID, "oldest change first")
@@ -228,7 +228,7 @@ func TestPollTicketsFromEpochReturnsEverything(t *testing.T) {
 	require.NoError(t, d.CreateTicket(newTicket("notes")))
 	require.NoError(t, d.CreateTicket(newTicket("timer")))
 
-	got, err := d.PollTickets(time.Time{})
+	got, err := d.PollTickets(time.Time{}, 0)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
@@ -236,7 +236,7 @@ func TestPollTicketsFromEpochReturnsEverything(t *testing.T) {
 func TestPollTicketsEmpty(t *testing.T) {
 	d := newTestDB(t)
 
-	got, err := d.PollTickets(time.Now())
+	got, err := d.PollTickets(time.Now(), 0)
 	require.NoError(t, err)
 	assert.NotNil(t, got, "an empty poll serialises as [] not null")
 	assert.Empty(t, got)
@@ -465,7 +465,7 @@ func TestQueriesFailOnClosedDB(t *testing.T) {
 	assert.Error(t, err)
 	_, err = d.ListTickets(TicketFilter{})
 	assert.Error(t, err)
-	_, err = d.PollTickets(time.Time{})
+	_, err = d.PollTickets(time.Time{}, 0)
 	assert.Error(t, err)
 	assert.Error(t, d.UpdateTicketStatus("FLG-ABC123", model.StatusOpen, ""))
 	assert.Error(t, d.UpdateTicketStatus("FLG-ABC123", model.StatusShipped, "1.0"))

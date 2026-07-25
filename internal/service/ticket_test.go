@@ -427,7 +427,7 @@ func TestUpdateStatus(t *testing.T) {
 	s, _ := newService(t)
 	ticket := mustCreate(t, s, validInput())
 
-	updated, err := s.UpdateStatus(ticket.ID, model.StatusInProgress, "")
+	updated, err := s.UpdateStatus(ticket.ID, model.StatusInProgress, nil)
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusInProgress, updated.Status)
 	assert.True(t, updated.UpdatedAt.After(ticket.CreatedAt))
@@ -438,9 +438,9 @@ func TestUpdateStatusAllowsAnyTransition(t *testing.T) {
 	ticket := mustCreate(t, s, validInput())
 
 	// Admins may jump the workflow in either direction.
-	_, err := s.UpdateStatus(ticket.ID, model.StatusClosed, "")
+	_, err := s.UpdateStatus(ticket.ID, model.StatusClosed, nil)
 	require.NoError(t, err)
-	reopened, err := s.UpdateStatus(ticket.ID, model.StatusOpen, "")
+	reopened, err := s.UpdateStatus(ticket.ID, model.StatusOpen, nil)
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusOpen, reopened.Status)
 }
@@ -449,7 +449,7 @@ func TestUpdateStatusRecordsShippedVersion(t *testing.T) {
 	s, _ := newService(t)
 	ticket := mustCreate(t, s, validInput())
 
-	updated, err := s.UpdateStatus(ticket.ID, model.StatusShipped, "  1.5.0 ")
+	updated, err := s.UpdateStatus(ticket.ID, model.StatusShipped, ptr("  1.5.0 "))
 	require.NoError(t, err)
 	assert.Equal(t, "1.5.0", updated.ShippedVersion)
 }
@@ -458,14 +458,14 @@ func TestUpdateStatusErrors(t *testing.T) {
 	s, _ := newService(t)
 	ticket := mustCreate(t, s, validInput())
 
-	_, err := s.UpdateStatus(ticket.ID, "done", "")
+	_, err := s.UpdateStatus(ticket.ID, "done", nil)
 	assert.ErrorIs(t, err, ErrInvalid)
 
-	_, err = s.UpdateStatus("FLG-ZZZZZZ", model.StatusClosed, "")
+	_, err = s.UpdateStatus("FLG-ZZZZZZ", model.StatusClosed, nil)
 	assert.ErrorIs(t, err, ErrNotFound)
 
 	require.NoError(t, s.DB.Close())
-	_, err = s.UpdateStatus(ticket.ID, model.StatusClosed, "")
+	_, err = s.UpdateStatus(ticket.ID, model.StatusClosed, nil)
 	assert.Error(t, err)
 }
 
@@ -553,7 +553,7 @@ func TestListAndPollTickets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
 
-	changed, err := s.PollTickets(cutoff)
+	changed, err := s.PollTickets(cutoff, 0)
 	require.NoError(t, err)
 	require.Len(t, changed, 1)
 	assert.Equal(t, second.ID, changed[0].ID)
@@ -637,7 +637,7 @@ func TestSettingsDBFailures(t *testing.T) {
 	assert.Error(t, err)
 	_, err = s.ListTickets(db.TicketFilter{})
 	assert.Error(t, err)
-	_, err = s.PollTickets(time.Time{})
+	_, err = s.PollTickets(time.Time{}, 0)
 	assert.Error(t, err)
 }
 
@@ -684,3 +684,7 @@ func TestTruncate(t *testing.T) {
 	assert.Equal(t, "", truncate("abc", 0))
 	assert.Equal(t, "äö", truncate("äöü", 2), "runes, not bytes")
 }
+
+// ptr returns a pointer to v, for the optional-field arguments that
+// distinguish "not specified" from "explicitly set".
+func ptr[T any](v T) *T { return &v }

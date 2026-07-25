@@ -19,7 +19,9 @@ func (s *Server) PublicRouter() http.Handler {
 	r.Get("/healthz", s.handleHealth)
 
 	r.Route("/api", func(r chi.Router) {
-		r.Post("/tickets", s.handleCreateTicket)
+		// Ticket creation is the only endpoint reachable without a credential,
+		// so it is the only one that needs a ceiling.
+		r.With(s.RateLimit(s.CreateLimiter)).Post("/tickets", s.handleCreateTicket)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.RequireDeviceToken)

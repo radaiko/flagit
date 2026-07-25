@@ -18,9 +18,15 @@ const maxRequestBytes = 4 << 20 // 4 MiB
 
 // Server holds the dependencies every handler needs.
 type Server struct {
-	Service  *service.Service
-	AdminKey string
-	Logger   *slog.Logger
+	Service *service.Service
+	// AdminKeyHash is the SHA-256 of the admin key. The key itself is never
+	// held in memory or on disk.
+	AdminKeyHash string
+	Logger       *slog.Logger
+
+	// CreateLimiter caps unauthenticated ticket creation per client. Nil
+	// disables limiting, which is only appropriate in tests.
+	CreateLimiter *RateLimiter
 
 	// Overlay serves the embedded web overlay; nil disables it.
 	Overlay http.Handler
@@ -28,12 +34,18 @@ type Server struct {
 	Dashboard http.Handler
 }
 
-// NewServer returns a Server with a usable logger.
-func NewServer(svc *service.Service, adminKey string, logger *slog.Logger) *Server {
+// NewServer returns a Server with a usable logger. adminKeyHash is the hash
+// of the admin key, as produced by db.HashAdminKey.
+func NewServer(svc *service.Service, adminKeyHash string, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{Service: svc, AdminKey: adminKey, Logger: logger}
+	return &Server{
+		Service:       svc,
+		AdminKeyHash:  adminKeyHash,
+		Logger:        logger,
+		CreateLimiter: NewRateLimiter(DefaultRateLimit, DefaultRateWindow),
+	}
 }
 
 // envelope is the success shape for every JSON response.

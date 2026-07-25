@@ -33,3 +33,9 @@ Thumbs.db
 # Build / orchestration helpers
 .claude-prompt*.md
 .run-claude*.sh
+
+# Generated build output. internal/overlay/dist is produced by `make web`; only
+# the placeholder is tracked, because //go:embed needs the directory to exist.
+web/coverage/
+internal/overlay/dist/*
+!internal/overlay/dist/.gitkeep

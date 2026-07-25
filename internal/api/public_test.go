@@ -116,14 +116,21 @@ func TestGetTicketEndpoint(t *testing.T) {
 	assert.Empty(t, got.LogRingBuffer, "logs are not echoed back to the reporter")
 }
 
-func TestGetTicketAcceptsTokenAsQueryParam(t *testing.T) {
+func TestGetTicketRejectsTokenInQueryString(t *testing.T) {
 	h := newHarness(t)
 	ticket := createTicket(t, h)
 
-	// Overlay links open in a browser and cannot set headers.
+	// A credential in the query string is written to every access log and
+	// forwarded in Referer, so the API refuses to read one. The overlay picks
+	// ?token= up on load, strips it from the URL, and sends it as a header.
 	rec := do(t, h.public, http.MethodGet, "/api/tickets/"+ticket.ID+"?token="+testToken, nil, nil)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, errorMessage(t, rec), "missing device token")
+
+	// The same token in the header works.
+	viaHeader := do(t, h.public, http.MethodGet, "/api/tickets/"+ticket.ID, nil, deviceHeaders())
+	assert.Equal(t, http.StatusOK, viaHeader.Code)
 }
 
 func TestGetTicketRejectsWrongToken(t *testing.T) {

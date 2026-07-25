@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"flagit/internal/db"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,6 +128,8 @@ func TestAdminKeyFrom(t *testing.T) {
 }
 
 func TestDeviceTokenFrom(t *testing.T) {
+	// Header only: a token in the query string would be logged by every proxy
+	// and leak through Referer, and it is the sole credential for a ticket.
 	tests := []struct {
 		name   string
 		path   string
@@ -133,10 +137,10 @@ func TestDeviceTokenFrom(t *testing.T) {
 		want   string
 	}{
 		{"header", "/", "abc", "abc"},
-		{"query", "/?token=abc", "", "abc"},
-		{"header wins", "/?token=xyz", "abc", "abc"},
+		{"header trimmed", "/", "  abc  ", "abc"},
+		{"query is ignored", "/?token=abc", "", ""},
+		{"header used, query ignored", "/?token=xyz", "abc", "abc"},
 		{"none", "/", "", ""},
-		{"blank header falls through", "/?token=abc", "   ", "abc"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,12 +155,24 @@ func TestDeviceTokenFrom(t *testing.T) {
 }
 
 func TestValidAdminKey(t *testing.T) {
-	srv := NewServer(nil, "correct-key", slog.New(slog.DiscardHandler))
+	// The server holds only the hash and compares hashes.
+	srv := NewServer(nil, db.HashAdminKey("correct-key"), slog.New(slog.DiscardHandler))
 
 	assert.True(t, srv.validAdminKey("correct-key"))
 	assert.False(t, srv.validAdminKey("correct-ke"))
 	assert.False(t, srv.validAdminKey("correct-keyy"))
 	assert.False(t, srv.validAdminKey(""))
+	assert.False(t, srv.validAdminKey("   "))
+
+	// Presenting the stored hash must not authenticate: it is not the key.
+	assert.False(t, srv.validAdminKey(db.HashAdminKey("correct-key")))
+}
+
+func TestServerNeverHoldsThePlaintextAdminKey(t *testing.T) {
+	srv := NewServer(nil, db.HashAdminKey("correct-key"), slog.New(slog.DiscardHandler))
+
+	assert.NotContains(t, srv.AdminKeyHash, "correct-key")
+	assert.Len(t, srv.AdminKeyHash, 64)
 }
 
 // failingWriter reports an error on the first Write, so the response-writing

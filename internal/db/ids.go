@@ -54,6 +54,14 @@ func HashDeviceToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HashAdminKey returns the hex SHA-256 of an admin key. Like device tokens,
+// only the hash is persisted, so a leaked database does not hand over admin
+// access. An empty key hashes to the empty string so "no key" can never match
+// a stored hash.
+func HashAdminKey(key string) string {
+	return HashDeviceToken(key)
+}
+
 // GenerateAdminKey returns a random 32-byte hex string for admin API auth.
 func GenerateAdminKey() (string, error) {
 	buf := make([]byte, 32)

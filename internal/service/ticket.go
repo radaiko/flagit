@@ -277,8 +277,22 @@ func (s *Service) postMessage(ticketID string, role model.Role, body string) (*m
 
 // UpdateStatus moves a ticket to a new status. Any transition between valid
 // statuses is allowed so an admin can always correct a ticket's state.
-// shippedVersion is optional and normally paired with StatusShipped.
-func (s *Service) UpdateStatus(ticketID string, status model.Status, shippedVersion string) (*model.Ticket, error) {
+//
+// A nil shippedVersion leaves the recorded release alone; a non-nil one is
+// written as given, so passing a pointer to "" is how a ticket that is no
+// longer shipped stops claiming a version.
+func (s *Service) UpdateStatus(
+	ticketID string, status model.Status, shippedVersion *string,
+) (*model.Ticket, error) {
+	return s.UpdateStatusWithComment(ticketID, status, shippedVersion, "")
+}
+
+// UpdateStatusWithComment moves a ticket and records an agent message in the
+// same transaction, so the ticket cannot end up moved without the explanation
+// that was meant to go with it.
+func (s *Service) UpdateStatusWithComment(
+	ticketID string, status model.Status, shippedVersion *string, comment string,
+) (*model.Ticket, error) {
 	if !status.Valid() {
 		return nil, fmt.Errorf("%w: unknown status %q", ErrInvalid, status)
 	}
@@ -286,7 +300,14 @@ func (s *Service) UpdateStatus(ticketID string, status model.Status, shippedVers
 	if err != nil {
 		return nil, err
 	}
-	if err := s.DB.UpdateTicketStatus(ticket.ID, status, strings.TrimSpace(shippedVersion)); err != nil {
+
+	version := ticket.ShippedVersion
+	if shippedVersion != nil {
+		version = truncate(strings.TrimSpace(*shippedVersion), MaxShortLen)
+	}
+
+	comment = truncate(strings.TrimSpace(comment), MaxMessageLen)
+	if err := s.DB.UpdateTicketStatusWithMessage(ticket.ID, status, version, comment); err != nil {
 		return nil, err
 	}
 	return s.DB.GetTicket(ticket.ID)
@@ -312,7 +333,7 @@ func (s *Service) BatchUpdateStatus(ids []string, status model.Status, shippedVe
 	result := &BatchResult{Updated: []string{}, Failed: map[string]string{}}
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
-		if _, err := s.UpdateStatus(id, status, shippedVersion); err != nil {
+		if _, err := s.UpdateStatus(id, status, &shippedVersion); err != nil {
 			result.Failed[id] = err.Error()
 			continue
 		}
@@ -352,14 +373,21 @@ func (s *Service) ListCommits(ticketID string) ([]*model.CommitInfo, error) {
 	return s.DB.ListCommitsByTicket(ticket.ID)
 }
 
-// ListTickets returns tickets matching filter. Admin only.
+// ListTickets returns one page of tickets matching filter. Admin only.
 func (s *Service) ListTickets(f db.TicketFilter) ([]*model.Ticket, error) {
 	return s.DB.ListTickets(f)
 }
 
-// PollTickets returns tickets changed after since, oldest change first.
-func (s *Service) PollTickets(since time.Time) ([]*model.Ticket, error) {
-	return s.DB.PollTickets(since)
+// CountTickets reports how many tickets match filter in total, ignoring its
+// paging fields.
+func (s *Service) CountTickets(f db.TicketFilter) (int, error) {
+	return s.DB.CountTickets(f)
+}
+
+// PollTickets returns tickets changed after since, oldest change first, up to
+// one page. A caller that gets a full page should poll again straight away.
+func (s *Service) PollTickets(since time.Time, limit int) ([]*model.Ticket, error) {
+	return s.DB.PollTickets(since, limit)
 }
 
 // ListApps returns every app Flagit has seen a ticket from.

@@ -69,6 +69,11 @@ func InitDB(path string) (*DB, error) {
 	}
 	// A single connection keeps ":memory:" coherent (each new connection would
 	// otherwise get its own empty database) and removes writer contention.
+	//
+	// TODO: this serialises reads behind writes, so a slow query blocks every
+	// other request. Revisit once traffic justifies it: keep one writer
+	// connection but open a separate read-only pool against the same WAL file,
+	// which is the usual shape for SQLite under concurrent load.
 	sqlDB.SetMaxOpenConns(1)
 
 	if err := sqlDB.Ping(); err != nil {

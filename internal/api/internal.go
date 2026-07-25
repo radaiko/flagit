@@ -13,19 +13,26 @@ import (
 )
 
 // pollResponse is what Hermes receives from /internal/poll. Now is the
-// timestamp to pass back as `since` on the next call.
+// timestamp to pass back as `since` on the next call; HasMore says the page
+// was filled, so the poller should come straight back rather than waiting for
+// its next tick.
 type pollResponse struct {
 	Tickets []*model.Ticket `json:"tickets"`
 	Since   time.Time       `json:"since"`
 	Now     time.Time       `json:"now"`
 	Count   int             `json:"count"`
+	Limit   int             `json:"limit"`
+	HasMore bool            `json:"hasMore"`
 }
 
-// handlePoll returns tickets created or updated after ?since. An absent
-// `since` returns everything, so a fresh poller can bootstrap.
+// handlePoll returns tickets created or updated after ?since, one page at a
+// time. An absent `since` starts from the beginning, so a fresh poller can
+// bootstrap.
 func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
 	var since time.Time
-	if raw := r.URL.Query().Get("since"); raw != "" {
+	if raw := q.Get("since"); raw != "" {
 		parsed, err := db.ParseFlexibleTime(raw)
 		if err != nil {
 			s.writeError(w, http.StatusBadRequest, "invalid since timestamp: "+err.Error())
@@ -34,25 +41,60 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		since = parsed
 	}
 
+	limit, ok := s.intParam(w, q.Get("limit"), "limit")
+	if !ok {
+		return
+	}
+
 	// Captured before the query so a ticket written mid-query is not skipped
 	// by the next poll.
 	now := time.Now().UTC()
 
-	tickets, err := s.Service.PollTickets(since)
+	tickets, err := s.Service.PollTickets(since, limit)
 	if err != nil {
 		s.writeServiceError(w, err)
 		return
+	}
+
+	effective := limit
+	if effective <= 0 {
+		effective = db.DefaultPageSize
 	}
 	s.writeJSON(w, http.StatusOK, pollResponse{
 		Tickets: tickets,
 		Since:   since,
 		Now:     now,
 		Count:   len(tickets),
+		Limit:   effective,
+		HasMore: len(tickets) >= effective,
 	}, "")
 }
 
+// intParam parses an optional non-negative integer query parameter. It writes
+// the error response itself and reports whether the caller should continue.
+func (s *Server) intParam(w http.ResponseWriter, raw, name string) (int, bool) {
+	if raw == "" {
+		return 0, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		s.writeError(w, http.StatusBadRequest, name+" must be a non-negative integer")
+		return 0, false
+	}
+	return value, true
+}
+
+// ticketPage is a page of tickets plus what a caller needs to walk the rest.
+type ticketPage struct {
+	Tickets []*model.Ticket `json:"tickets"`
+	Total   int             `json:"total"`
+	Limit   int             `json:"limit"`
+	Offset  int             `json:"offset"`
+	HasMore bool            `json:"hasMore"`
+}
+
 // handleListTickets lists tickets for the admin dashboard, with optional
-// app/status/type filters.
+// app/status/type filters and offset/limit paging.
 func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filter := db.TicketFilter{
@@ -60,21 +102,39 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 		Status:  model.Status(q.Get("status")),
 		Type:    model.TicketType(q.Get("type")),
 	}
-	if raw := q.Get("limit"); raw != "" {
-		limit, err := strconv.Atoi(raw)
-		if err != nil || limit < 0 {
-			s.writeError(w, http.StatusBadRequest, "limit must be a non-negative integer")
-			return
-		}
-		filter.Limit = limit
+
+	limit, ok := s.intParam(w, q.Get("limit"), "limit")
+	if !ok {
+		return
 	}
+	offset, ok := s.intParam(w, q.Get("offset"), "offset")
+	if !ok {
+		return
+	}
+	filter.Limit, filter.Offset = limit, offset
 
 	tickets, err := s.Service.ListTickets(filter)
 	if err != nil {
 		s.writeServiceError(w, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, tickets, "")
+	total, err := s.Service.CountTickets(filter)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+
+	effective := limit
+	if effective <= 0 {
+		effective = db.DefaultPageSize
+	}
+	s.writeJSON(w, http.StatusOK, ticketPage{
+		Tickets: tickets,
+		Total:   total,
+		Limit:   effective,
+		Offset:  offset,
+		HasMore: offset+len(tickets) < total,
+	}, "")
 }
 
 // adminTicketView is the full ticket, including everything hidden from the
@@ -136,37 +196,31 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request) {
 
 // updateTicketRequest patches a ticket's status, optionally adding an agent
 // comment in the same call.
+//
+// ShippedVersion is a pointer so an omitted field ("leave the recorded release
+// alone") is distinguishable from an explicit empty one ("this is no longer
+// shipped").
 type updateTicketRequest struct {
 	Status         model.Status `json:"status"`
-	ShippedVersion string       `json:"shippedVersion"`
+	ShippedVersion *string      `json:"shippedVersion"`
 	Comment        string       `json:"comment"`
 }
 
-// handleUpdateTicket applies a status change from Hermes or an admin.
+// handleUpdateTicket applies a status change from Hermes or an admin. The
+// status change and the comment are written in one transaction, so a failed
+// comment cannot leave the ticket silently moved.
 func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 	var req updateTicketRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	id := chi.URLParam(r, "id")
 
-	ticket, err := s.Service.UpdateStatus(id, req.Status, req.ShippedVersion)
+	ticket, err := s.Service.UpdateStatusWithComment(
+		chi.URLParam(r, "id"), req.Status, req.ShippedVersion, req.Comment)
 	if err != nil {
 		s.writeServiceError(w, err)
 		return
-	}
-	// The comment is posted after the status change so the conversation reads
-	// in the order things happened.
-	if req.Comment != "" {
-		if _, err := s.Service.PostAgentMessage(ticket.ID, req.Comment); err != nil {
-			s.writeServiceError(w, err)
-			return
-		}
-		if ticket, err = s.Service.GetTicketByID(ticket.ID); err != nil {
-			s.writeServiceError(w, err)
-			return
-		}
 	}
 	s.writeJSON(w, http.StatusOK, ticket, "ticket updated")
 }

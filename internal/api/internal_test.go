@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"testing"
 	"time"
@@ -80,9 +81,14 @@ func TestAdminKeyIgnoresNonBearerAuthorization(t *testing.T) {
 }
 
 func TestUnconfiguredAdminKeyFailsClosed(t *testing.T) {
-	h := newHarness(t)
-	h.AdminKey = ""
-	router := h.InternalRouter()
+	// A server built with an empty hash must reject every request regardless
+	// of what the caller sends.
+	db, err := db.InitDB(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	svc := service.New(db, nil, "", slog.New(slog.DiscardHandler))
+	srv := NewServer(svc, "", slog.New(slog.DiscardHandler))
+	router := srv.InternalRouter()
 
 	// An empty configured key must not be matchable by an empty header.
 	rec := do(t, router, http.MethodGet, "/internal/tickets", nil, map[string]string{HeaderAdminKey: ""})
@@ -182,9 +188,9 @@ func TestListTicketsEndpoint(t *testing.T) {
 			rec := do(t, h.internal, http.MethodGet, "/internal/tickets"+tt.query, nil, adminHeaders())
 
 			require.Equal(t, http.StatusOK, rec.Code)
-			var tickets []*model.Ticket
-			decodeData(t, rec, &tickets)
-			assert.Len(t, tickets, tt.want)
+			var page ticketPage
+			decodeData(t, rec, &page)
+			assert.Len(t, page.Tickets, tt.want)
 		})
 	}
 }
@@ -438,10 +444,10 @@ func TestBatchUpdateEndpoint(t *testing.T) {
 	assert.Contains(t, result.Failed, "FLG-ZZZZZZ")
 
 	got := do(t, h.internal, http.MethodGet, "/internal/tickets?status=shipped", nil, adminHeaders())
-	var tickets []*model.Ticket
-	decodeData(t, got, &tickets)
-	require.Len(t, tickets, 2)
-	assert.Equal(t, "1.5.0", tickets[0].ShippedVersion)
+	var page ticketPage
+	decodeData(t, got, &page)
+	require.Len(t, page.Tickets, 2)
+	assert.Equal(t, "1.5.0", page.Tickets[0].ShippedVersion)
 }
 
 func TestBatchUpdateErrors(t *testing.T) {
@@ -708,9 +714,11 @@ func TestDuplicateTicketIDsNeverHappenAcrossManyCreates(t *testing.T) {
 	}
 
 	rec := do(t, h.internal, http.MethodGet, "/internal/tickets", nil, adminHeaders())
-	var tickets []*model.Ticket
-	decodeData(t, rec, &tickets)
-	assert.Len(t, tickets, 50, fmt.Sprintf("expected %d distinct tickets", len(seen)))
+	var page ticketPage
+	decodeData(t, rec, &page)
+	assert.Len(t, page.Tickets, 50, fmt.Sprintf("expected %d distinct tickets", len(seen)))
+	assert.Equal(t, 50, page.Total)
+	assert.False(t, page.HasMore)
 }
 
 func TestUnknownTicketIDShapesAreRejectedConsistently(t *testing.T) {

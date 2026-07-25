@@ -181,12 +181,12 @@ func TestResolveAdminKeyUsesProvidedValue(t *testing.T) {
 	key, err := resolveAdminKey(database, "  provided-key  ", &out)
 
 	require.NoError(t, err)
-	assert.Equal(t, "provided-key", key)
+	assert.Len(t, key, 64, "the returned value is a SHA-256 hex hash, not the raw key")
 	assert.Empty(t, out.String(), "a supplied key is not echoed to stdout")
 
-	stored, err := database.GetSetting(model.SettingAdminKey, "")
+	stored, err := database.GetSetting(model.SettingAdminKeyHash, "")
 	require.NoError(t, err)
-	assert.Equal(t, "provided-key", stored)
+	assert.Equal(t, key, stored)
 }
 
 func TestResolveAdminKeyGeneratesAndPrintsOnce(t *testing.T) {
@@ -196,8 +196,10 @@ func TestResolveAdminKeyGeneratesAndPrintsOnce(t *testing.T) {
 	key, err := resolveAdminKey(database, "", &out)
 	require.NoError(t, err)
 	assert.Len(t, key, 64)
-	assert.Contains(t, out.String(), key)
-	assert.Contains(t, out.String(), "shown only once")
+	// The output shows the raw generated key, not the hash.
+	assert.Regexp(t, `[0-9a-f]{64}`, out.String())
+	assert.Contains(t, out.String(), "the only time it can")
+	assert.Contains(t, out.String(), "be shown")
 
 	// A restart reuses the stored key and stays quiet.
 	out.Reset()
@@ -306,11 +308,13 @@ func TestServerStartsAndServesRequests(t *testing.T) {
 	authed := get(t, adminURL+"/internal/tickets", map[string]string{api.HeaderAdminKey: "integration-key"})
 	require.Equal(t, http.StatusOK, authed.StatusCode)
 	var listed struct {
-		Data []model.Ticket `json:"data"`
+		Data struct {
+			Tickets []model.Ticket `json:"tickets"`
+		} `json:"data"`
 	}
 	decodeBody(t, authed, &listed)
-	require.Len(t, listed.Data, 1)
-	assert.Equal(t, created.Data.ID, listed.Data[0].ID)
+	require.Len(t, listed.Data.Tickets, 1)
+	assert.Equal(t, created.Data.ID, listed.Data.Tickets[0].ID)
 
 	// The public port must not expose the internal API at all.
 	leaked := get(t, publicURL+"/internal/tickets", map[string]string{api.HeaderAdminKey: "integration-key"})

@@ -106,13 +106,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}()
 	logger.Info("database ready", "path", cfg.dbPath)
 
-	adminKey, err := resolveAdminKey(database, cfg.adminKey, stdout)
+	adminKeyHash, err := resolveAdminKey(database, cfg.adminKey, stdout)
 	if err != nil {
 		return err
 	}
 
 	svc := service.New(database, webhook.NewSender(logger), cfg.publicURL, logger)
-	srv := api.NewServer(svc, adminKey, logger)
+	srv := api.NewServer(svc, adminKeyHash, logger)
 
 	if err := mountFrontend(srv, cfg, logger); err != nil {
 		return err
@@ -168,20 +168,25 @@ func serve(ctx context.Context, logger *slog.Logger, servers ...*http.Server) er
 	return runErr
 }
 
-// resolveAdminKey settles on the admin key to use, in order of precedence:
-// the flag/env value, a key persisted from a previous start, or a freshly
-// generated one. A generated key is printed once, because it is the only time
-// it is shown.
+// resolveAdminKey settles on the admin key to use and returns its SHA-256
+// hash, in order of precedence: the flag/env value, a hash persisted from a
+// previous start, or a freshly generated key.
+//
+// Only the hash is ever stored, the same way device tokens are handled, so a
+// copy of the database does not hand over admin access. A generated key is
+// therefore printed exactly once — nothing can recover it afterwards.
 func resolveAdminKey(database *db.DB, provided string, stdout io.Writer) (string, error) {
 	if provided = strings.TrimSpace(provided); provided != "" {
-		// Persisted so the dashboard and a restart without the env var agree.
-		if err := database.SetSetting(model.SettingAdminKey, provided); err != nil {
+		hash := db.HashAdminKey(provided)
+		// Persisted so a later restart without the env var still accepts the
+		// same key.
+		if err := database.SetSetting(model.SettingAdminKeyHash, hash); err != nil {
 			return "", fmt.Errorf("store admin key: %w", err)
 		}
-		return provided, nil
+		return hash, nil
 	}
 
-	stored, err := database.GetSetting(model.SettingAdminKey, "")
+	stored, err := database.GetSetting(model.SettingAdminKeyHash, "")
 	if err != nil {
 		return "", fmt.Errorf("read admin key: %w", err)
 	}
@@ -193,13 +198,15 @@ func resolveAdminKey(database *db.DB, provided string, stdout io.Writer) (string
 	if err != nil {
 		return "", fmt.Errorf("generate admin key: %w", err)
 	}
-	if err := database.SetSetting(model.SettingAdminKey, generated); err != nil {
+	hash := db.HashAdminKey(generated)
+	if err := database.SetSetting(model.SettingAdminKeyHash, hash); err != nil {
 		return "", fmt.Errorf("store admin key: %w", err)
 	}
 
 	fmt.Fprintf(stdout, "\n  No FLAGIT_ADMIN_KEY set — generated one for this instance:\n\n    %s\n\n"+
-		"  Save it: it is shown only once. Send it as the X-Admin-Key header.\n\n", generated)
-	return generated, nil
+		"  Save it now: only its hash is stored, so this is the only time it can\n"+
+		"  be shown. Send it as the X-Admin-Key header.\n\n", generated)
+	return hash, nil
 }
 
 // mountFrontend attaches the overlay and dashboard handlers, proxying to Vite

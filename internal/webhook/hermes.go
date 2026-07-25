@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -118,6 +119,15 @@ func (s *Sender) Send(ctx context.Context, url string, payload Payload) error {
 		s.logger().Warn("webhook attempt failed",
 			"ticket", payload.TicketID, "attempt", attempt, "of", attempts, "error", lastErr)
 
+		// A 4xx means Hermes understood the request and rejected it. Sending
+		// the identical body again cannot change that answer, so retrying only
+		// delays the error and adds load.
+		if !isRetryable(lastErr) {
+			s.logger().Error("webhook rejected, not retrying",
+				"ticket", payload.TicketID, "error", lastErr)
+			return fmt.Errorf("webhook rejected: %w", lastErr)
+		}
+
 		if attempt == attempts {
 			break
 		}
@@ -126,6 +136,36 @@ func (s *Sender) Send(ctx context.Context, url string, payload Payload) error {
 		}
 	}
 	return fmt.Errorf("webhook delivery failed after %d attempts: %w", attempts, lastErr)
+}
+
+// StatusError is a non-2xx response from the webhook endpoint.
+type StatusError struct {
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("webhook returned HTTP %d", e.StatusCode)
+}
+
+// Permanent reports whether the status is a client error, which will not
+// resolve itself on a retry. 408 (Request Timeout) and 429 (Too Many Requests)
+// are the exceptions: both explicitly invite the caller to come back.
+func (e *StatusError) Permanent() bool {
+	if e.StatusCode == http.StatusRequestTimeout || e.StatusCode == http.StatusTooManyRequests {
+		return false
+	}
+	return e.StatusCode >= 400 && e.StatusCode < 500
+}
+
+// isRetryable reports whether another attempt could plausibly succeed. Network
+// and 5xx failures are transient; a rejected request is not.
+func isRetryable(err error) bool {
+	var status *StatusError
+	if errors.As(err, &status) {
+		return !status.Permanent()
+	}
+	// Anything else is a transport-level failure: DNS, TLS, connection reset.
+	return true
 }
 
 // wait backs off before the next attempt, honouring context cancellation.
@@ -168,7 +208,7 @@ func (s *Sender) post(ctx context.Context, url string, body []byte) error {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("webhook returned HTTP %d", resp.StatusCode)
+		return &StatusError{StatusCode: resp.StatusCode}
 	}
 	return nil
 }

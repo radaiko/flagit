@@ -79,13 +79,35 @@ func (d *DB) GetTicket(id string) (*model.Ticket, error) {
 	return t, err
 }
 
-// TicketFilter narrows a ticket listing. The zero value lists everything,
-// newest first.
+// DefaultPageSize bounds a listing that does not ask for a specific size, so a
+// dashboard on an instance with 50k tickets cannot pull all of them at once.
+const DefaultPageSize = 100
+
+// MaxPageSize caps what a caller may request per page.
+const MaxPageSize = 1000
+
+// TicketFilter narrows a ticket listing. The zero value lists the first
+// DefaultPageSize tickets, newest first.
 type TicketFilter struct {
 	AppName string
 	Status  model.Status
 	Type    model.TicketType
 	Limit   int
+	Offset  int
+}
+
+// page returns the limit and offset to apply, clamped to sane bounds.
+func page(limit, offset int) (int, int) {
+	if limit <= 0 {
+		limit = DefaultPageSize
+	}
+	if limit > MaxPageSize {
+		limit = MaxPageSize
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 // ListTickets returns tickets matching filter, newest first.
@@ -108,38 +130,72 @@ func (d *DB) ListTickets(f TicketFilter) ([]*model.Ticket, error) {
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY created_at DESC, id DESC"
-	if f.Limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, f.Limit)
-	}
+	limit, offset := page(f.Limit, f.Offset)
+	query += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
 	return d.queryTickets(query, args...)
 }
 
-// PollTickets returns every ticket updated strictly after since, oldest change
-// first, so a poller can walk forward through the stream.
-func (d *DB) PollTickets(since time.Time) ([]*model.Ticket, error) {
+// PollTickets returns tickets updated strictly after since, oldest change
+// first, so a poller can walk forward through the stream. The page is bounded;
+// a poller that receives a full page should immediately poll again using the
+// last returned UpdatedAt as its new cursor.
+func (d *DB) PollTickets(since time.Time, limit int) ([]*model.Ticket, error) {
+	size, _ := page(limit, 0)
 	return d.queryTickets(`SELECT `+ticketColumns+` FROM tickets
-		WHERE updated_at > ? ORDER BY updated_at ASC, id ASC`, FormatTime(since))
+		WHERE updated_at > ? ORDER BY updated_at ASC, id ASC LIMIT ?`,
+		FormatTime(since), size)
 }
 
-// UpdateTicketStatus moves a ticket to status and touches UpdatedAt. Passing a
-// non-empty shippedVersion also records the release the fix went out in.
+// UpdateTicketStatus moves a ticket to status and touches UpdatedAt.
+//
+// shippedVersion is written unconditionally, including when it is empty: a
+// ticket moved back out of "shipped" must stop claiming it went out in 1.5.0.
+// Callers that want to keep the existing value pass it back in.
 func (d *DB) UpdateTicketStatus(id string, status model.Status, shippedVersion string) error {
-	now := FormatTime(d.Now())
-	var res sql.Result
-	var err error
-	if shippedVersion != "" {
-		res, err = d.sql.Exec(`UPDATE tickets SET status = ?, shipped_version = ?, updated_at = ? WHERE id = ?`,
-			string(status), shippedVersion, now, id)
-	} else {
-		res, err = d.sql.Exec(`UPDATE tickets SET status = ?, updated_at = ? WHERE id = ?`,
-			string(status), now, id)
-	}
+	res, err := d.sql.Exec(
+		`UPDATE tickets SET status = ?, shipped_version = ?, updated_at = ? WHERE id = ?`,
+		string(status), shippedVersion, FormatTime(d.Now()), id)
 	if err != nil {
 		return err
 	}
 	return expectOneRow(res)
+}
+
+// UpdateTicketStatusWithMessage applies a status change and appends an agent
+// message in a single transaction, so a ticket can never end up moved without
+// the explanation that was meant to accompany it. An empty comment writes no
+// message.
+func (d *DB) UpdateTicketStatusWithMessage(
+	id string, status model.Status, shippedVersion, comment string,
+) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	// Rollback after a successful Commit is a no-op, so this is safe to defer
+	// unconditionally and covers every early return below.
+	defer func() { _ = tx.Rollback() }()
+
+	now := FormatTime(d.Now())
+	res, err := tx.Exec(
+		`UPDATE tickets SET status = ?, shipped_version = ?, updated_at = ? WHERE id = ?`,
+		string(status), shippedVersion, now, id)
+	if err != nil {
+		return err
+	}
+	if err := expectOneRow(res); err != nil {
+		return err
+	}
+
+	if comment != "" {
+		if _, err := tx.Exec(
+			`INSERT INTO messages (ticket_id, body, role, created_at) VALUES (?,?,?,?)`,
+			id, comment, string(model.RoleAgent), now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // TouchTicket bumps UpdatedAt so a changed ticket resurfaces in polling.
@@ -151,10 +207,32 @@ func (d *DB) TouchTicket(id string) error {
 	return expectOneRow(res)
 }
 
-// CountTickets reports how many tickets match filter.
+// CountTickets reports how many tickets match filter, ignoring its Limit and
+// Offset: this is the total a paginated caller needs in order to know how many
+// pages there are.
 func (d *DB) CountTickets(f TicketFilter) (int, error) {
-	tickets, err := d.ListTickets(f)
-	return len(tickets), err
+	query := `SELECT COUNT(*) FROM tickets`
+	var where []string
+	var args []any
+	if f.AppName != "" {
+		where = append(where, "app_name = ?")
+		args = append(args, f.AppName)
+	}
+	if f.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, string(f.Status))
+	}
+	if f.Type != "" {
+		where = append(where, "type = ?")
+		args = append(args, string(f.Type))
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	var n int
+	err := d.sql.QueryRow(query, args...).Scan(&n)
+	return n, err
 }
 
 func (d *DB) queryTickets(query string, args ...any) ([]*model.Ticket, error) {
