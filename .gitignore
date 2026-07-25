@@ -1,5 +1,7 @@
 # Go
-flagit
+# Anchored: an unanchored "flagit" would also ignore cmd/flagit/.
+/flagit
+/bin/
 *.exe
 *.test
 *.out
