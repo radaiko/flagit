@@ -1,0 +1,29 @@
+services:
+  flagit:
+    build: .
+    image: flagit
+    container_name: flagit
+    restart: unless-stopped
+
+    ports:
+      # Public API and web overlay — this is the one apps talk to.
+      - "8080:8080"
+      # Internal API and admin dashboard. Published on all interfaces here for
+      # a straightforward local run; on a public host, bind it to the Tailscale
+      # address instead ("100.x.y.z:3000:3000") so it is never reachable from
+      # the internet.
+      - "3000:3000"
+
+    volumes:
+      - flagit_data:/data
+
+    environment:
+      # Externally reachable base URL. Used to build the ticket link in the
+      # Hermes webhook payload.
+      FLAGIT_PUBLIC_URL: ${FLAGIT_PUBLIC_URL:-}
+      # Leave unset on first run: Flagit generates a key and prints it once to
+      # the container log (`docker compose logs flagit`).
+      FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY:-}
+
+volumes:
+  flagit_data:

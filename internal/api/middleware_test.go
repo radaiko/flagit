@@ -195,6 +195,72 @@ func TestOverlayAndDashboardAreOptional(t *testing.T) {
 		do(t, h.internal, http.MethodGet, "/internal/admin", nil, adminHeaders()).Code)
 }
 
+func TestIsReservedPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/api", true},
+		{"/api/", true},
+		{"/api/tickets", true},
+		{"/internal", true},
+		{"/internal/poll", true},
+		// Same leading characters, different path segment.
+		{"/apiary", false},
+		{"/internals", false},
+		{"/api-docs", false},
+		{"/", false},
+		{"/overlay", false},
+		{"/assets/api.js", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			assert.Equal(t, tt.want, isReservedPath(tt.path))
+		})
+	}
+}
+
+func TestMountedOverlayNeverAnswersAPIPaths(t *testing.T) {
+	h := newHarness(t)
+	h.Overlay = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>overlay</html>"))
+	})
+	router := h.PublicRouter()
+
+	// An unknown or misspelled API path must fail as an API call, not hand a
+	// client the overlay's HTML with a 200.
+	for _, path := range []string{
+		"/api", "/api/", "/api/nope", "/api/tickets/FLG-ABC123/nope",
+		"/internal", "/internal/", "/internal/tickets", "/internal/poll",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := do(t, router, http.MethodGet, path, nil, adminHeaders())
+
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+			assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+			assert.NotContains(t, rec.Body.String(), "<html>")
+		})
+	}
+}
+
+func TestMountedOverlayStillServesFrontendRoutes(t *testing.T) {
+	h := newHarness(t)
+	h.Overlay = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>overlay</html>"))
+	})
+	router := h.PublicRouter()
+
+	// "/apiary" starts with "/api" as a string but is not an API path.
+	for _, path := range []string{"/", "/overlay", "/ticket/FLG-7X3K9Q", "/assets/app.js", "/apiary"} {
+		t.Run(path, func(t *testing.T) {
+			rec := do(t, router, http.MethodGet, path, nil, nil)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Contains(t, rec.Body.String(), "overlay")
+		})
+	}
+}
+
 func TestOverlayAndDashboardAreServedWhenMounted(t *testing.T) {
 	h := newHarness(t)
 	h.Overlay = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

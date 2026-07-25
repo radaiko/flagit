@@ -1,0 +1,189 @@
+/**
+ * Thin client over the Flagit HTTP API.
+ *
+ * Every call resolves to the `data` field of the server's success envelope, or
+ * throws an ApiError carrying a translation key so the UI never has to render
+ * a raw server string to a person.
+ */
+
+/** An API failure with a translation key the UI can render. */
+export class ApiError extends Error {
+  /**
+   * @param {string} messageKey i18n key, e.g. `error.forbidden`
+   * @param {number} [status] HTTP status, 0 when the request never landed
+   * @param {string} [detail] the server's own message, for admins and logs
+   */
+  constructor(messageKey, status = 0, detail = '') {
+    super(detail || messageKey);
+    this.name = 'ApiError';
+    this.messageKey = messageKey;
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** Map an HTTP status onto the message a person should read. */
+function keyForStatus(status) {
+  if (status === 403) return 'error.forbidden';
+  if (status === 404) return 'error.notFound';
+  if (status === 401) return 'admin.keyInvalid';
+  return 'error.generic';
+}
+
+/**
+ * Perform a request and unwrap the response envelope.
+ *
+ * @param {string} path
+ * @param {{method?: string, body?: unknown, headers?: Record<string,string>, fetchImpl?: typeof fetch}} [options]
+ */
+async function request(path, { method = 'GET', body, headers = {}, fetchImpl } = {}) {
+  const doFetch = fetchImpl ?? globalThis.fetch;
+
+  const init = { method, headers: { ...headers } };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+
+  let response;
+  try {
+    response = await doFetch(path, init);
+  } catch (cause) {
+    // The request never reached the server: offline, DNS, CORS, TLS.
+    throw new ApiError('error.network', 0, cause?.message ?? '');
+  }
+
+  const payload = await readJson(response);
+
+  if (!response.ok) {
+    throw new ApiError(keyForStatus(response.status), response.status, payload?.error ?? '');
+  }
+  return payload?.data ?? null;
+}
+
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    // A body that is empty or not JSON is only a problem when we needed it;
+    // callers treat a null payload as "no data".
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------- public API -- */
+
+/**
+ * Client for the app-facing API, authorised by the reporter's device token.
+ *
+ * @param {{deviceToken: string, baseUrl?: string, fetchImpl?: typeof fetch}} config
+ */
+export function createPublicClient({ deviceToken, baseUrl = '', fetchImpl }) {
+  const auth = () => ({ 'X-Device-Token': deviceToken });
+
+  return {
+    /** File a new ticket. Returns the created ticket, including its ID. */
+    createTicket(ticket) {
+      return request(`${baseUrl}/api/tickets`, {
+        method: 'POST',
+        body: { ...ticket, deviceToken },
+        fetchImpl,
+      });
+    },
+
+    /** Load a ticket and its conversation. */
+    getTicket(id) {
+      return request(`${baseUrl}/api/tickets/${encodeURIComponent(id)}`, {
+        headers: auth(),
+        fetchImpl,
+      });
+    },
+
+    /** Add a reply to a ticket. */
+    postMessage(id, text) {
+      return request(`${baseUrl}/api/tickets/${encodeURIComponent(id)}/messages`, {
+        method: 'POST',
+        body: { body: text },
+        headers: auth(),
+        fetchImpl,
+      });
+    },
+  };
+}
+
+/* ------------------------------------------------------------- admin API -- */
+
+/**
+ * Client for the internal API, authorised by the admin key.
+ *
+ * @param {{adminKey: string, baseUrl?: string, fetchImpl?: typeof fetch}} config
+ */
+export function createAdminClient({ adminKey, baseUrl = '', fetchImpl }) {
+  const auth = () => ({ 'X-Admin-Key': adminKey });
+  const call = (path, options = {}) =>
+    request(`${baseUrl}${path}`, { ...options, headers: auth(), fetchImpl });
+
+  return {
+    /** List tickets, optionally narrowed by app, status or type. */
+    listTickets(filter = {}) {
+      const query = new URLSearchParams();
+      if (filter.app) query.set('app', filter.app);
+      if (filter.status) query.set('status', filter.status);
+      if (filter.type) query.set('type', filter.type);
+      const suffix = query.toString() ? `?${query}` : '';
+      return call(`/internal/tickets${suffix}`);
+    },
+
+    /** Load one ticket with its conversation and commits. */
+    getTicket(id) {
+      return call(`/internal/tickets/${encodeURIComponent(id)}`);
+    },
+
+    /** Change a ticket's status, optionally with a reply in the same step. */
+    updateTicket(id, { status, shippedVersion, comment } = {}) {
+      return call(`/internal/tickets/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: { status, shippedVersion: shippedVersion ?? '', comment: comment ?? '' },
+      });
+    },
+
+    /** Reply to the reporter. */
+    postMessage(id, text) {
+      return call(`/internal/tickets/${encodeURIComponent(id)}/messages`, {
+        method: 'POST',
+        body: { body: text },
+      });
+    },
+
+    /** Apply one status to many tickets, e.g. marking a release shipped. */
+    batchUpdate(ticketIds, status, shippedVersion = '') {
+      return call('/internal/tickets/batch', {
+        method: 'POST',
+        body: { ticketIds, status, shippedVersion },
+      });
+    },
+
+    /** Every app Flagit has seen a ticket from. */
+    listApps() {
+      return call('/internal/apps');
+    },
+
+    /** Turn automatic processing on or off for one app. */
+    updateApp(name, autoProcessEnabled) {
+      return call(`/internal/apps/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        body: { autoProcessEnabled },
+      });
+    },
+
+    /** Read the global configuration. */
+    getSettings() {
+      return call('/internal/settings');
+    },
+
+    /** Patch the global configuration; omitted fields are left alone. */
+    updateSettings(patch) {
+      return call('/internal/settings', { method: 'PATCH', body: patch });
+    },
+  };
+}

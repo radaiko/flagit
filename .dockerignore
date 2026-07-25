@@ -1,0 +1,48 @@
+# Everything the image builds for itself, plus anything that would bust the
+# build cache or leak local state into the image.
+
+.git
+.gitignore
+.github
+
+# Installed inside the node stage by `npm ci`.
+node_modules
+web/node_modules
+
+# Rebuilt inside the image; a local copy would shadow the fresh build.
+web/dist
+web/coverage
+internal/overlay/dist
+bin
+data
+*.db
+*.db-shm
+*.db-wal
+
+# Test and tooling output
+coverage.out
+*.test
+*.out
+
+# Docs and local tooling that the build does not read
+README.md
+CLAUDE.md
+Makefile
+docker-compose.yml
+Dockerfile
+.dockerignore
+.claude
+.claude-prompt*.md
+.run-claude.sh
+
+# Editor and OS noise
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local environment
+.env
+.env.local

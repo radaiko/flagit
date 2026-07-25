@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <title>Report a problem</title>
+  </head>
+  <body>
+    <!--
+      Host apps set the data-* attributes below when they load the overlay, so
+      diagnostics arrive without needing a JavaScript bridge into the webview.
+    -->
+    <div
+      id="app"
+      data-app-name=""
+      data-app-version=""
+      data-os=""
+      data-platform=""
+      data-device-model=""
+      data-logs=""
+      data-logs-duration-min="0"
+    ></div>
+    <script type="module" src="/src/overlay/main.js"></script>
+  </body>
+</html>

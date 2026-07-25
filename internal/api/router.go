@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -13,6 +14,7 @@ func (s *Server) PublicRouter() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(s.RequestLogger)
 	r.Use(CORS)
+	s.useJSONFallbacks(r)
 
 	r.Get("/healthz", s.handleHealth)
 
@@ -28,9 +30,50 @@ func (s *Server) PublicRouter() http.Handler {
 	})
 
 	if s.Overlay != nil {
-		r.Handle("/*", s.Overlay)
+		r.Handle("/*", s.overlayOrJSON404())
 	}
 	return r
+}
+
+// useJSONFallbacks makes chi's default 404 and 405 responses match the rest of
+// the API. Set before any Route() call so sub-routers inherit them; otherwise a
+// miss inside /api would answer in plain text while everything else is JSON.
+func (s *Server) useJSONFallbacks(r chi.Router) {
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		s.writeError(w, http.StatusNotFound, "no such endpoint")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed for this endpoint")
+	})
+}
+
+// reservedRoots never belong to the frontend. Without this guard the SPA
+// catch-all would answer an unknown or misspelled API path with the overlay's
+// HTML, which reads as a success to a browser and is useless to an API client.
+var reservedRoots = []string{"/api", "/internal"}
+
+// isReservedPath reports whether path is an API path rather than a frontend
+// route. The segment boundary matters: "/api/x" is reserved, "/apiary" is an
+// ordinary frontend route that merely starts with the same letters.
+func isReservedPath(path string) bool {
+	for _, root := range reservedRoots {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// overlayOrJSON404 serves the overlay for frontend routes and a JSON 404 for
+// anything under an API prefix that no route claimed.
+func (s *Server) overlayOrJSON404() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isReservedPath(r.URL.Path) {
+			s.writeError(w, http.StatusNotFound, "no such endpoint")
+			return
+		}
+		s.Overlay.ServeHTTP(w, r)
+	})
 }
 
 // InternalRouter serves /internal/* for Hermes and the admin dashboard. Every
@@ -40,6 +83,7 @@ func (s *Server) InternalRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(s.RequestLogger)
+	s.useJSONFallbacks(r)
 
 	r.Get("/healthz", s.handleHealth)
 

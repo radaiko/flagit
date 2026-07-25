@@ -29,3 +29,7 @@ Thumbs.db
 
 # Docker
 /data/
+
+# Build / orchestration helpers
+.claude-prompt*.md
+.run-claude*.sh

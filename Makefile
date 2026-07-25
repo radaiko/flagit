@@ -1,0 +1,61 @@
+.DEFAULT_GOAL := help
+
+BINARY      := bin/flagit
+WEB_DIST    := web/dist
+EMBED_DIST  := internal/overlay/dist
+DB_PATH     ?= ./data/flagit.db
+DOCKER_TAG  ?= flagit
+
+.PHONY: help dev dev-web test test-go test-web coverage build web clean docker docker-run fmt vet lint
+
+help: ## Show this help
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-12s\033[0m %s\n", $$1, $$2}'
+
+dev: ## Run the Go server in dev mode (proxies the frontend to Vite)
+	go run ./cmd/flagit --dev --db-path $(DB_PATH)
+
+dev-web: ## Run the Vite dev server (pair with `make dev` in another shell)
+	cd web && npm run dev
+
+web: ## Build the Svelte frontend and stage it for embedding
+	cd web && npm run build
+	rm -rf $(EMBED_DIST)
+	mkdir -p $(EMBED_DIST)
+	cp -R $(WEB_DIST)/. $(EMBED_DIST)/
+
+build: web ## Build the production binary with the frontend embedded
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(BINARY) ./cmd/flagit
+
+test: test-go test-web ## Run every test
+
+test-go: ## Run the Go tests
+	go test ./... -race
+
+test-web: ## Run the Svelte tests
+	cd web && npm run test
+
+coverage: ## Report test coverage for both halves
+	go test ./... -coverprofile=coverage.out
+	go tool cover -func=coverage.out | tail -1
+	cd web && npm run coverage
+
+fmt: ## Format the Go sources
+	gofmt -w .
+
+vet: ## Run go vet
+	go vet ./...
+
+lint: fmt vet ## Format and vet
+
+docker: ## Build the Docker image
+	docker build -t $(DOCKER_TAG) .
+
+docker-run: docker ## Build and run the image locally
+	docker run --rm -p 8080:8080 -p 3000:3000 -v flagit_data:/data $(DOCKER_TAG)
+
+clean: ## Remove build output and coverage reports
+	rm -rf bin $(WEB_DIST) coverage.out web/coverage
+	rm -rf $(EMBED_DIST)
+	mkdir -p $(EMBED_DIST)
+	printf 'Build output from web/ is copied here by `make web`. The directory must exist\nfor the //go:embed directive in overlay.go to compile.\n' > $(EMBED_DIST)/.gitkeep

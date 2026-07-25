@@ -19,6 +19,7 @@ import (
 	"flagit/internal/api"
 	"flagit/internal/db"
 	"flagit/internal/model"
+	"flagit/internal/overlay"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -235,13 +236,32 @@ func TestMountFrontendDevModeRejectsBadViteURL(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestMountFrontendWithoutABuildIsNotFatal(t *testing.T) {
+func TestMountFrontend(t *testing.T) {
 	srv := api.NewServer(nil, "key", slog.New(slog.DiscardHandler))
 	var logs bytes.Buffer
 
 	err := mountFrontend(srv, &config{}, newLogger(&logs, "warn"))
+	require.NoError(t, err)
 
-	require.NoError(t, err, "the API is useful without a frontend build")
+	// A binary built after `make web` embeds the frontend and serves it; one
+	// built without it still starts and serves the API alone.
+	if overlay.Built() {
+		assert.NotNil(t, srv.Overlay)
+		assert.NotNil(t, srv.Dashboard)
+	} else {
+		assert.Nil(t, srv.Overlay)
+		assert.Contains(t, logs.String(), "no frontend build embedded")
+	}
+}
+
+func TestRunRejectsBadViteURL(t *testing.T) {
+	err := run(context.Background(), []string{
+		"--dev", "--vite-url", "://nope",
+		"--db-path", filepath.Join(t.TempDir(), "flagit.db"),
+		"--admin-key", "key",
+	}, io.Discard, io.Discard)
+
+	assert.Error(t, err)
 }
 
 // TestServerStartsAndServesRequests boots the real binary wiring on ephemeral

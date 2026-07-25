@@ -1,0 +1,26 @@
+{
+  "name": "flagit-web",
+  "version": "1.0.0",
+  "description": "Flagit web overlay and admin dashboard",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/svelte": "^5.4.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "jsdom": "^29.1.1",
+    "svelte": "^5.56.8",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
+  },
+  "private": true,
+  "type": "module"
+}

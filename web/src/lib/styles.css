@@ -1,0 +1,276 @@
+/*
+ * Flagit design tokens.
+ *
+ * The palette comes from utility-marking tape — the standardised colours
+ * surveyors spray on the ground before anyone digs. That vernacular is where
+ * the product's name lives (you plant a flag on a problem), and it maps onto
+ * ticket status without inventing an arbitrary colour key:
+ *
+ *   orange  marker      open          something is flagged here
+ *   yellow  caution     in-progress   work underway
+ *   blue    water       resolved      fixed, not yet released
+ *   green   all clear   shipped       out in the world
+ *   slate   retired     closed        no longer live
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --ink: #16181d;
+  --ink-2: #3d424c;
+  --ink-3: #61656e;
+  --paper: #fbfaf7;
+  --paper-2: #f2efe9;
+  --line: #e4e1da;
+  --marker: #ff5a1f;
+  --marker-ink: #ffffff;
+
+  --status-open: #ff5a1f;
+  --status-in-progress: #cf9500;
+  --status-resolved: #2f80ed;
+  --status-shipped: #0f8f5b;
+  --status-closed: #61656e;
+
+  --danger: #c62828;
+
+  /* Type. The personality is in the treatment, not in a downloaded face:
+     nothing is fetched at runtime, so the overlay works offline in a webview. */
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.0625rem;
+  --step-2: 1.375rem;
+  --step-3: 1.875rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --radius: 3px;
+  --radius-lg: 6px;
+
+  --focus: 2px solid var(--marker);
+  --focus-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #f2efe9;
+    --ink-2: #b6bac2;
+    --ink-3: #888d97;
+    --paper: #14161a;
+    --paper-2: #1d2026;
+    --line: #2c3037;
+    --marker: #ff6a33;
+    --marker-ink: #14161a;
+
+    --status-in-progress: #f2b705;
+    --status-resolved: #5aa0f5;
+    --status-shipped: #2bb87c;
+    --status-closed: #888d97;
+
+    --danger: #ef6c6c;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--step-0);
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h1 {
+  font-size: var(--step-3);
+}
+h2 {
+  font-size: var(--step-2);
+}
+h3 {
+  font-size: var(--step-1);
+}
+
+p {
+  margin: 0;
+}
+
+/* Every identifier, status and unit of metadata is set like a stencilled
+   equipment tag. This is the one type gesture the whole product shares. */
+.mono,
+.field-label,
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  color: var(--ink-3);
+}
+
+/* ---------------------------------------------------------------- forms -- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-label {
+  color: var(--ink-3);
+}
+
+.field-hint {
+  font-size: var(--step--1);
+  color: var(--ink-3);
+}
+
+input[type='text'],
+input[type='password'],
+input[type='search'],
+textarea,
+select {
+  width: 100%;
+  padding: var(--space-3);
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+input[type='text']:focus-visible,
+input[type='password']:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--marker);
+}
+
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-weight: 600;
+  color: var(--marker-ink);
+  background: var(--marker);
+  border: 1px solid var(--marker);
+  border-radius: var(--radius);
+}
+
+.btn-secondary {
+  color: var(--ink);
+  background: transparent;
+  border-color: var(--line);
+}
+
+.btn-quiet {
+  padding: var(--space-2);
+  color: var(--ink-3);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* --------------------------------------------------------------- alerts -- */
+
+.alert {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--step--1);
+  border-left: 3px solid var(--danger);
+  background: var(--paper-2);
+}
+
+.alert-ok {
+  border-left-color: var(--status-shipped);
+}
+
+/* ------------------------------------------------------------- utility -- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
