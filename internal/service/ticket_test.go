@@ -449,9 +449,81 @@ func TestUpdateStatusRecordsShippedVersion(t *testing.T) {
 	s, _ := newService(t)
 	ticket := mustCreate(t, s, validInput())
 
+	// Walk the documented workflow: open → in-progress → resolved → shipped.
+	_, err := s.UpdateStatus(ticket.ID, model.StatusInProgress, nil)
+	require.NoError(t, err)
+	_, err = s.UpdateStatus(ticket.ID, model.StatusResolved, nil)
+	require.NoError(t, err)
+
 	updated, err := s.UpdateStatus(ticket.ID, model.StatusShipped, ptr("  1.5.0 "))
 	require.NoError(t, err)
 	assert.Equal(t, "1.5.0", updated.ShippedVersion)
+}
+
+func TestUpdateStatusEnforcesTheWorkflow(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	// open → shipped skips two stages, which is almost always a mistake.
+	_, err := s.UpdateStatus(ticket.ID, model.StatusShipped, nil)
+	require.ErrorIs(t, err, ErrInvalid)
+	assert.ErrorContains(t, err, "cannot move a ticket")
+	assert.ErrorContains(t, err, "force")
+
+	still, err := s.GetTicketByID(ticket.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, still.Status, "a rejected move changes nothing")
+}
+
+func TestForceBypassesTheWorkflow(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	updated, err := s.ApplyUpdate(ticket.ID, StatusUpdate{
+		Status: ptr(model.StatusShipped),
+		Force:  true,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusShipped, updated.Status)
+}
+
+func TestApplyUpdateAcceptsACommentWithoutAStatus(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	updated, err := s.ApplyUpdate(ticket.ID, StatusUpdate{Comment: "Still looking into this"})
+
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, updated.Status, "the status is left alone")
+
+	messages, err := s.ListMessagesByID(ticket.ID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "Still looking into this", messages[0].Body)
+	assert.Equal(t, model.RoleAgent, messages[0].Role)
+}
+
+func TestApplyUpdateRejectsAnEmptyUpdate(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	// Neither a status nor a comment: accepting this would let a client
+	// believe it had done something.
+	_, err := s.ApplyUpdate(ticket.ID, StatusUpdate{})
+
+	assert.ErrorIs(t, err, ErrInvalid)
+	assert.ErrorContains(t, err, "provide a status, a comment, or both")
+}
+
+func TestApplyUpdateAllowsRestatingTheCurrentStatus(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	updated, err := s.ApplyUpdate(ticket.ID, StatusUpdate{Status: ptr(model.StatusOpen)})
+
+	require.NoError(t, err, "re-saving without a change is not an error")
+	assert.Equal(t, model.StatusOpen, updated.Status)
 }
 
 func TestUpdateStatusErrors(t *testing.T) {
@@ -474,7 +546,7 @@ func TestBatchUpdateStatus(t *testing.T) {
 	first := mustCreate(t, s, validInput())
 	second := mustCreate(t, s, validInput())
 
-	result, err := s.BatchUpdateStatus([]string{first.ID, " " + second.ID + " "}, model.StatusShipped, "1.5.0")
+	result, err := s.BatchUpdateStatus([]string{first.ID, " " + second.ID + " "}, model.StatusShipped, "1.5.0", true)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{first.ID, second.ID}, result.Updated)
 	assert.Empty(t, result.Failed)
@@ -489,20 +561,21 @@ func TestBatchUpdateStatusReportsPerTicketFailures(t *testing.T) {
 	s, _ := newService(t)
 	ticket := mustCreate(t, s, validInput())
 
-	result, err := s.BatchUpdateStatus([]string{ticket.ID, "FLG-ZZZZZZ"}, model.StatusClosed, "")
+	result, err := s.BatchUpdateStatus([]string{ticket.ID, "FLG-ZZZZZZ"}, model.StatusClosed, "", true)
 
 	require.NoError(t, err, "one stale id must not fail the whole sweep")
 	assert.Equal(t, []string{ticket.ID}, result.Updated)
-	assert.Contains(t, result.Failed, "FLG-ZZZZZZ")
+	assert.Equal(t, ReasonNotFound, result.Failed["FLG-ZZZZZZ"],
+		"a stable reason code, not a raw error string")
 }
 
 func TestBatchUpdateStatusValidation(t *testing.T) {
 	s, _ := newService(t)
 
-	_, err := s.BatchUpdateStatus([]string{"FLG-ABC123"}, "nonsense", "")
+	_, err := s.BatchUpdateStatus([]string{"FLG-ABC123"}, "nonsense", "", true)
 	assert.ErrorIs(t, err, ErrInvalid)
 
-	_, err = s.BatchUpdateStatus(nil, model.StatusClosed, "")
+	_, err = s.BatchUpdateStatus(nil, model.StatusClosed, "", true)
 	assert.ErrorIs(t, err, ErrInvalid)
 }
 
@@ -553,7 +626,7 @@ func TestListAndPollTickets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, all, 2)
 
-	changed, err := s.PollTickets(cutoff, 0)
+	changed, err := s.PollTickets(cutoff, nil)
 	require.NoError(t, err)
 	require.Len(t, changed, 1)
 	assert.Equal(t, second.ID, changed[0].ID)
@@ -637,7 +710,7 @@ func TestSettingsDBFailures(t *testing.T) {
 	assert.Error(t, err)
 	_, err = s.ListTickets(db.TicketFilter{})
 	assert.Error(t, err)
-	_, err = s.PollTickets(time.Time{}, 0)
+	_, err = s.PollTickets(time.Time{}, nil)
 	assert.Error(t, err)
 }
 
@@ -688,3 +761,109 @@ func TestTruncate(t *testing.T) {
 // ptr returns a pointer to v, for the optional-field arguments that
 // distinguish "not specified" from "explicitly set".
 func ptr[T any](v T) *T { return &v }
+
+func TestValidateWebhookURL(t *testing.T) {
+	valid := []string{
+		"https://hermes.example/hook",
+		"http://hermes.example:9000/hook",
+		"https://203.0.113.10/hook",
+	}
+	for _, url := range valid {
+		t.Run("accepts "+url, func(t *testing.T) {
+			assert.NoError(t, ValidateWebhookURL(url))
+		})
+	}
+
+	// Flagit fetches this URL from inside its own network, so an address that
+	// only resolves there is a server-side request forgery target.
+	invalid := []string{
+		"ftp://hermes.example/hook",
+		"file:///etc/passwd",
+		"hermes.example/hook",
+		"https://",
+		"http://127.0.0.1:9000/hook",
+		"http://localhost:9000/hook",
+		"http://app.localhost/hook",
+		"http://10.0.0.5/hook",
+		"http://172.16.0.5/hook",
+		"http://172.31.255.254/hook",
+		"http://192.168.1.5/hook",
+		"http://169.254.169.254/latest/meta-data",
+		"http://0.0.0.0/hook",
+		"http://100.101.102.103/hook",
+		"http://[::1]/hook",
+	}
+	for _, url := range invalid {
+		t.Run("rejects "+url, func(t *testing.T) {
+			err := ValidateWebhookURL(url)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrInvalid)
+		})
+	}
+}
+
+func TestValidateWebhookURLAllowsPublicIPsNearPrivateRanges(t *testing.T) {
+	// 172.15 and 172.32 sit just outside 172.16.0.0/12, and must not be caught
+	// by an over-broad prefix check.
+	assert.NoError(t, ValidateWebhookURL("http://172.15.0.1/hook"))
+	assert.NoError(t, ValidateWebhookURL("http://172.32.0.1/hook"))
+	assert.NoError(t, ValidateWebhookURL("http://11.0.0.1/hook"))
+}
+
+func TestUpdateSettingsRejectsAnSSRFWebhook(t *testing.T) {
+	s, _ := newService(t)
+	internal := "http://169.254.169.254/latest/meta-data"
+
+	_, err := s.UpdateSettings(nil, &internal)
+
+	require.ErrorIs(t, err, ErrInvalid)
+	assert.ErrorContains(t, err, "private or loopback")
+
+	// Nothing was stored, so a rejected URL cannot be used later.
+	settings, err := s.GetSettings()
+	require.NoError(t, err)
+	assert.Empty(t, settings.HermesWebhookURL)
+}
+
+func TestBatchFailureReason(t *testing.T) {
+	assert.Equal(t, ReasonNotFound, batchFailureReason(ErrNotFound))
+	assert.Equal(t, ReasonInvalidTransition, batchFailureReason(ErrInvalid))
+	assert.Equal(t, ReasonInternalError, batchFailureReason(errors.New("disk full")))
+}
+
+func TestBatchReportsAnInvalidTransitionAsSuch(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	// Without force, open → shipped is refused per ticket rather than failing
+	// the whole sweep.
+	result, err := s.BatchUpdateStatus([]string{ticket.ID}, model.StatusShipped, "1.5.0", false)
+
+	require.NoError(t, err)
+	assert.Empty(t, result.Updated)
+	assert.Equal(t, ReasonInvalidTransition, result.Failed[ticket.ID])
+}
+
+func TestBatchFailureNeverLeaksRawErrors(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+	require.NoError(t, s.DB.Close())
+
+	result, err := s.BatchUpdateStatus([]string{ticket.ID}, model.StatusClosed, "", true)
+
+	require.NoError(t, err)
+	assert.Equal(t, ReasonInternalError, result.Failed[ticket.ID])
+	assert.NotContains(t, result.Failed[ticket.ID], "sql")
+	assert.NotContains(t, result.Failed[ticket.ID], "database")
+}
+
+func TestAssertOwnerRejectsAMismatchedHash(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	assert.NoError(t, s.assertOwner(ticket, deviceToken))
+	assert.ErrorIs(t, s.assertOwner(ticket, "wrong-token"), ErrForbidden)
+	assert.ErrorIs(t, s.assertOwner(ticket, ""), ErrForbidden)
+	// The stored hash is not itself a credential.
+	assert.ErrorIs(t, s.assertOwner(ticket, ticket.DeviceTokenHash), ErrForbidden)
+}

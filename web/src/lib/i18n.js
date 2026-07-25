@@ -418,6 +418,18 @@ export function rememberLanguage(lang, storage) {
   }
 }
 
+/**
+ * Reflect the active language on <html lang>, so screen readers switch
+ * pronunciation and the browser offers the right translation prompt. Svelte
+ * only owns the mount point, so this attribute has to be set by hand.
+ *
+ * @param {string} lang
+ */
+export function applyDocumentLanguage(lang) {
+  const element = globalThis.document?.documentElement;
+  if (element) element.lang = lang;
+}
+
 /** The other language — the toggle is binary, so "other" is unambiguous. */
 export function otherLanguage(lang) {
   return lang === 'de' ? 'en' : 'de';

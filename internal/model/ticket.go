@@ -43,6 +43,49 @@ func (s Status) Valid() bool {
 	return false
 }
 
+// allowedTransitions is the workflow the product documents:
+//
+//	open → in-progress → resolved → shipped → closed
+//
+// Each step may also skip straight to closed (a ticket can be dismissed at any
+// point) and step back one stage (work reopens, a release is rolled back).
+// Anything else is a mistake worth catching — an admin who genuinely means it
+// passes the override, see CanTransitionTo.
+var allowedTransitions = map[Status][]Status{
+	StatusOpen:       {StatusInProgress, StatusResolved, StatusClosed},
+	StatusInProgress: {StatusOpen, StatusResolved, StatusClosed},
+	StatusResolved:   {StatusInProgress, StatusShipped, StatusClosed},
+	StatusShipped:    {StatusResolved, StatusClosed},
+	StatusClosed:     {StatusOpen, StatusInProgress},
+}
+
+// CanTransitionTo reports whether a ticket may move from s to next under the
+// documented workflow. Moving to the status it already holds is always allowed,
+// so re-saving a ticket without changing its status is not an error.
+func (s Status) CanTransitionTo(next Status) bool {
+	if !s.Valid() || !next.Valid() {
+		return false
+	}
+	if s == next {
+		return true
+	}
+	for _, allowed := range allowedTransitions[s] {
+		if next == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// NextStatuses lists the statuses a ticket in status s may move to, for a UI
+// that wants to offer only the legal ones.
+func (s Status) NextStatuses() []Status {
+	if !s.Valid() {
+		return nil
+	}
+	return append([]Status{s}, allowedTransitions[s]...)
+}
+
 // Role identifies who wrote a message.
 type Role string
 

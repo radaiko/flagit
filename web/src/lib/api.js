@@ -124,14 +124,42 @@ export function createAdminClient({ adminKey, baseUrl = '', fetchImpl }) {
     request(`${baseUrl}${path}`, { ...options, headers: auth(), fetchImpl });
 
   return {
-    /** List tickets, optionally narrowed by app, status or type. */
-    listTickets(filter = {}) {
+    /**
+     * List one page of tickets, optionally narrowed by app, status or type.
+     *
+     * Resolves to the array of tickets. Use listTicketPage when the paging
+     * metadata matters.
+     */
+    async listTickets(filter = {}) {
+      const page = await this.listTicketPage(filter);
+      return page.tickets;
+    },
+
+    /**
+     * List one page of tickets with its paging metadata:
+     * `{ tickets, total, limit, offset, hasMore }`.
+     */
+    async listTicketPage(filter = {}) {
       const query = new URLSearchParams();
       if (filter.app) query.set('app', filter.app);
       if (filter.status) query.set('status', filter.status);
       if (filter.type) query.set('type', filter.type);
+      if (filter.limit !== undefined) query.set('limit', String(filter.limit));
+      if (filter.offset !== undefined) query.set('offset', String(filter.offset));
       const suffix = query.toString() ? `?${query}` : '';
-      return call(`/internal/tickets${suffix}`);
+
+      const page = await call(`/internal/tickets${suffix}`);
+      // An older server, or a stubbed client, may hand back a bare array.
+      if (Array.isArray(page)) {
+        return { tickets: page, total: page.length, limit: page.length, offset: 0, hasMore: false };
+      }
+      return {
+        tickets: page?.tickets ?? [],
+        total: page?.total ?? 0,
+        limit: page?.limit ?? 0,
+        offset: page?.offset ?? 0,
+        hasMore: page?.hasMore ?? false,
+      };
     },
 
     /** Load one ticket with its conversation and commits. */
@@ -139,12 +167,19 @@ export function createAdminClient({ adminKey, baseUrl = '', fetchImpl }) {
       return call(`/internal/tickets/${encodeURIComponent(id)}`);
     },
 
-    /** Change a ticket's status, optionally with a reply in the same step. */
-    updateTicket(id, { status, shippedVersion, comment } = {}) {
-      return call(`/internal/tickets/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        body: { status, shippedVersion: shippedVersion ?? '', comment: comment ?? '' },
-      });
+    /**
+     * Change a ticket's status and/or reply to the reporter. Omit status to
+     * leave the ticket where it is and only add a comment.
+     *
+     * force skips workflow validation, for an admin correcting a ticket that
+     * is in the wrong state.
+     */
+    updateTicket(id, { status, shippedVersion, comment, force } = {}) {
+      const body = { comment: comment ?? '' };
+      if (status !== undefined) body.status = status;
+      if (shippedVersion !== undefined) body.shippedVersion = shippedVersion;
+      if (force !== undefined) body.force = force;
+      return call(`/internal/tickets/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
 
     /** Reply to the reporter. */
@@ -155,11 +190,17 @@ export function createAdminClient({ adminKey, baseUrl = '', fetchImpl }) {
       });
     },
 
-    /** Apply one status to many tickets, e.g. marking a release shipped. */
-    batchUpdate(ticketIds, status, shippedVersion = '') {
+    /**
+     * Apply one status to many tickets, e.g. marking a release shipped.
+     *
+     * force defaults to true: a release sweep routinely moves tickets straight
+     * from open to shipped, which the normal workflow does not allow, and an
+     * admin selecting rows in the dashboard has already made that decision.
+     */
+    batchUpdate(ticketIds, status, shippedVersion = '', force = true) {
       return call('/internal/tickets/batch', {
         method: 'POST',
-        body: { ticketIds, status, shippedVersion },
+        body: { ticketIds, status, shippedVersion, force },
       });
     },
 

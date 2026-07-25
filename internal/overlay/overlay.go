@@ -82,6 +82,8 @@ func spaHandler(assets fs.FS, entry, prefix string) http.Handler {
 	files := http.FileServer(http.FS(assets))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w)
+
 		upath := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if prefix != "" {
 			upath = strings.TrimPrefix(upath, strings.Trim(prefix, "/"))
@@ -101,6 +103,39 @@ func spaHandler(assets fs.FS, entry, prefix string) http.Handler {
 	})
 }
 
+// ContentSecurityPolicy for the embedded frontends.
+//
+// Everything the SPA needs is served from this origin, so the policy is a
+// tight allowlist. 'unsafe-inline' is granted for styles only: Svelte injects
+// component CSS as inline <style> at runtime, and there is no build step here
+// that could hash or nonce it. Scripts get no such exemption, which is what
+// actually blocks injected markup from executing.
+const ContentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self'; " +
+	"connect-src 'self'; " +
+	"object-src 'none'; " +
+	"base-uri 'none'; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'self'"
+
+// setSecurityHeaders applies the headers every frontend response carries.
+// Applied in the handler rather than per file so a static asset served by the
+// file server gets them too.
+func setSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", ContentSecurityPolicy)
+	// Stops a browser from second-guessing Content-Type, which is how a
+	// user-supplied file can end up executed as script.
+	h.Set("X-Content-Type-Options", "nosniff")
+	// Ticket IDs and device tokens can appear in a URL; never send them to
+	// another origin in a Referer header.
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Frame-Options", "SAMEORIGIN")
+}
+
 func exists(assets fs.FS, name string) bool {
 	info, err := fs.Stat(assets, name)
 	return err == nil && !info.IsDir()
@@ -112,6 +147,9 @@ func serveFile(w http.ResponseWriter, r *http.Request, assets fs.FS, name string
 		http.Error(w, "frontend not built", http.StatusNotFound)
 		return
 	}
+	// Set here as well as in spaHandler so a caller using serveFile directly
+	// cannot end up without them.
+	setSecurityHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The entry HTML must not be cached: it names the hashed asset bundles.
 	w.Header().Set("Cache-Control", "no-cache")

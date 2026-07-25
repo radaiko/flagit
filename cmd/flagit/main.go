@@ -27,6 +27,11 @@ import (
 // shutdownGrace is how long in-flight requests get to finish on SIGINT/SIGTERM.
 const shutdownGrace = 15 * time.Second
 
+// webhookDrainGrace bounds the wait for outbound webhooks after the servers
+// have stopped. A missed delivery is recoverable — Hermes polls — so this is
+// deliberately shorter than the delivery retry budget.
+const webhookDrainGrace = 20 * time.Second
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -111,7 +116,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	svc := service.New(database, webhook.NewSender(logger), cfg.publicURL, logger)
+	sender := webhook.NewSender(logger)
+	svc := service.New(database, sender, cfg.publicURL, logger)
+	// Deliveries run on the sender's tracked goroutines so shutdown can drain
+	// them rather than dropping a ticket that was accepted but never announced.
+	svc.Dispatch = sender.Go
+
 	srv := api.NewServer(svc, adminKeyHash, logger)
 
 	if err := mountFrontend(srv, cfg, logger); err != nil {
@@ -130,7 +140,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	logger.Info("starting flagit", "publicPort", cfg.port, "adminPort", cfg.adminPort, "dev", cfg.dev)
-	return serve(ctx, logger, public, internal)
+	err = serve(ctx, logger, public, internal)
+	drainWebhooks(logger, sender)
+	return err
+}
+
+// drainWebhooks waits for in-flight Hermes deliveries once the servers have
+// stopped accepting requests. Bounded, because a wedged Hermes must not stop
+// the process from exiting.
+func drainWebhooks(logger *slog.Logger, sender *webhook.Sender) {
+	ctx, cancel := context.WithTimeout(context.Background(), webhookDrainGrace)
+	defer cancel()
+
+	if sender.Wait(ctx) {
+		return
+	}
+	logger.Warn("gave up waiting for in-flight webhooks",
+		"after", webhookDrainGrace.String(),
+		"note", "Hermes can still pick these tickets up from /internal/poll")
 }
 
 // serve runs both servers until one fails or ctx is cancelled, then shuts them

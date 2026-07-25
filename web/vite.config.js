@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => ({
       // tests already cover everything they do.
       exclude: ['src/**/main.js'],
       reporter: ['text', 'html'],
-      thresholds: { lines: 90, functions: 90, statements: 90 },
+      thresholds: { lines: 90, functions: 90, statements: 90, branches: 85 },
     },
   },
 }));

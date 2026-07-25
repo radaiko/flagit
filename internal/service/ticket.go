@@ -4,9 +4,12 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -215,9 +218,14 @@ func (s *Service) GetTicketByID(id string) (*model.Ticket, error) {
 }
 
 // assertOwner reports whether deviceToken hashes to the ticket's stored hash.
+// The comparison is constant-time so the hash cannot be reconstructed byte by
+// byte from how long a rejection takes.
 func (s *Service) assertOwner(t *model.Ticket, deviceToken string) error {
 	hash := db.HashDeviceToken(deviceToken)
-	if hash == "" || hash != t.DeviceTokenHash {
+	if hash == "" {
+		return ErrForbidden
+	}
+	if subtle.ConstantTimeCompare([]byte(hash), []byte(t.DeviceTokenHash)) != 1 {
 		return ErrForbidden
 	}
 	return nil
@@ -275,8 +283,23 @@ func (s *Service) postMessage(ticketID string, role model.Role, body string) (*m
 	return m, nil
 }
 
-// UpdateStatus moves a ticket to a new status. Any transition between valid
-// statuses is allowed so an admin can always correct a ticket's state.
+// StatusUpdate is a change to apply to a ticket. Every field is optional, so
+// the caller can move a ticket, add a comment, or do both.
+type StatusUpdate struct {
+	// Status is the status to move to. Nil keeps the current one, which is how
+	// a comment is added without touching the workflow.
+	Status *model.Status
+	// ShippedVersion is the release the fix went out in. Nil leaves the
+	// recorded value alone; a pointer to "" clears it.
+	ShippedVersion *string
+	// Comment is an agent message written in the same transaction as the move.
+	Comment string
+	// Force skips workflow validation. Admins correcting a ticket's state need
+	// this; Hermes walking the normal flow does not.
+	Force bool
+}
+
+// UpdateStatus moves a ticket to a new status along the documented workflow.
 //
 // A nil shippedVersion leaves the recorded release alone; a non-nil one is
 // written as given, so passing a pointer to "" is how a ticket that is no
@@ -284,7 +307,10 @@ func (s *Service) postMessage(ticketID string, role model.Role, body string) (*m
 func (s *Service) UpdateStatus(
 	ticketID string, status model.Status, shippedVersion *string,
 ) (*model.Ticket, error) {
-	return s.UpdateStatusWithComment(ticketID, status, shippedVersion, "")
+	return s.ApplyUpdate(ticketID, StatusUpdate{
+		Status:         &status,
+		ShippedVersion: shippedVersion,
+	})
 }
 
 // UpdateStatusWithComment moves a ticket and records an agent message in the
@@ -293,36 +319,91 @@ func (s *Service) UpdateStatus(
 func (s *Service) UpdateStatusWithComment(
 	ticketID string, status model.Status, shippedVersion *string, comment string,
 ) (*model.Ticket, error) {
-	if !status.Valid() {
-		return nil, fmt.Errorf("%w: unknown status %q", ErrInvalid, status)
-	}
+	return s.ApplyUpdate(ticketID, StatusUpdate{
+		Status:         &status,
+		ShippedVersion: shippedVersion,
+		Comment:        comment,
+	})
+}
+
+// ApplyUpdate applies a StatusUpdate. The status change and the comment are
+// written in one transaction, so a ticket cannot end up moved without the
+// explanation that was meant to accompany it.
+func (s *Service) ApplyUpdate(ticketID string, update StatusUpdate) (*model.Ticket, error) {
 	ticket, err := s.GetTicketByID(ticketID)
 	if err != nil {
 		return nil, err
 	}
 
-	version := ticket.ShippedVersion
-	if shippedVersion != nil {
-		version = truncate(strings.TrimSpace(*shippedVersion), MaxShortLen)
+	comment := truncate(strings.TrimSpace(update.Comment), MaxMessageLen)
+
+	// A no-op is a mistake worth reporting: silently accepting it would let a
+	// client believe it had done something.
+	status := ticket.Status
+	if update.Status != nil {
+		status = *update.Status
+		if !status.Valid() {
+			return nil, fmt.Errorf("%w: unknown status %q", ErrInvalid, status)
+		}
+		if !update.Force && !ticket.Status.CanTransitionTo(status) {
+			return nil, fmt.Errorf(
+				"%w: cannot move a ticket from %q to %q; the workflow is %s. "+
+					"Pass force to override",
+				ErrInvalid, ticket.Status, status, workflowDescription)
+		}
+	} else if comment == "" {
+		return nil, fmt.Errorf("%w: provide a status, a comment, or both", ErrInvalid)
 	}
 
-	comment = truncate(strings.TrimSpace(comment), MaxMessageLen)
+	version := ticket.ShippedVersion
+	if update.ShippedVersion != nil {
+		version = truncate(strings.TrimSpace(*update.ShippedVersion), MaxShortLen)
+	}
+
 	if err := s.DB.UpdateTicketStatusWithMessage(ticket.ID, status, version, comment); err != nil {
 		return nil, err
 	}
 	return s.DB.GetTicket(ticket.ID)
 }
 
-// BatchResult reports the outcome of a bulk status update.
+// workflowDescription is the documented order, quoted back in errors so a
+// caller does not have to go looking for it.
+const workflowDescription = "open → in-progress → resolved → shipped → closed"
+
+// BatchResult reports the outcome of a bulk status update. Failed maps a
+// ticket ID to a stable reason code, not to a raw error: these values are
+// rendered in the dashboard and would otherwise leak SQL text and schema
+// details to whoever is looking at it.
 type BatchResult struct {
 	Updated []string          `json:"updated"`
 	Failed  map[string]string `json:"failed"`
 }
 
+// Reasons a ticket can be skipped by a batch update.
+const (
+	ReasonNotFound          = "not_found"
+	ReasonInvalidTransition = "invalid_transition"
+	ReasonInternalError     = "internal_error"
+)
+
+// batchFailureReason classifies an error into one of the stable reason codes.
+func batchFailureReason(err error) string {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return ReasonNotFound
+	case errors.Is(err, ErrInvalid):
+		return ReasonInvalidTransition
+	default:
+		return ReasonInternalError
+	}
+}
+
 // BatchUpdateStatus applies one status (and optional shipped version) to many
 // tickets. Unknown IDs are reported per-ticket rather than failing the batch,
 // so one stale ID cannot block a release sweep.
-func (s *Service) BatchUpdateStatus(ids []string, status model.Status, shippedVersion string) (*BatchResult, error) {
+func (s *Service) BatchUpdateStatus(
+	ids []string, status model.Status, shippedVersion string, force bool,
+) (*BatchResult, error) {
 	if !status.Valid() {
 		return nil, fmt.Errorf("%w: unknown status %q", ErrInvalid, status)
 	}
@@ -333,8 +414,15 @@ func (s *Service) BatchUpdateStatus(ids []string, status model.Status, shippedVe
 	result := &BatchResult{Updated: []string{}, Failed: map[string]string{}}
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
-		if _, err := s.UpdateStatus(id, status, &shippedVersion); err != nil {
-			result.Failed[id] = err.Error()
+		update := StatusUpdate{Status: &status, ShippedVersion: &shippedVersion, Force: force}
+		if _, err := s.ApplyUpdate(id, update); err != nil {
+			reason := batchFailureReason(err)
+			if reason == ReasonInternalError {
+				// The reason the caller sees is deliberately vague, so the
+				// detail has to survive somewhere.
+				s.logger().Error("batch update failed", "ticket", id, "error", err)
+			}
+			result.Failed[id] = reason
 			continue
 		}
 		result.Updated = append(result.Updated, id)
@@ -386,7 +474,7 @@ func (s *Service) CountTickets(f db.TicketFilter) (int, error) {
 
 // PollTickets returns tickets changed after since, oldest change first, up to
 // one page. A caller that gets a full page should poll again straight away.
-func (s *Service) PollTickets(since time.Time, limit int) ([]*model.Ticket, error) {
+func (s *Service) PollTickets(since time.Time, limit *int) ([]*model.Ticket, error) {
 	return s.DB.PollTickets(since, limit)
 }
 
@@ -435,11 +523,13 @@ func (s *Service) UpdateSettings(globalAutoProcess *bool, hermesWebhookURL *stri
 		}
 	}
 	if hermesWebhookURL != nil {
-		url := strings.TrimSpace(*hermesWebhookURL)
-		if url != "" && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-			return nil, fmt.Errorf("%w: webhook url must start with http:// or https://", ErrInvalid)
+		raw := strings.TrimSpace(*hermesWebhookURL)
+		if raw != "" {
+			if err := ValidateWebhookURL(raw); err != nil {
+				return nil, err
+			}
 		}
-		if err := s.DB.SetSetting(model.SettingHermesWebhookURL, url); err != nil {
+		if err := s.DB.SetSetting(model.SettingHermesWebhookURL, raw); err != nil {
 			return nil, err
 		}
 	}
@@ -460,4 +550,63 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(runes[:n])
+}
+
+// ValidateWebhookURL checks a Hermes webhook URL before it is stored.
+//
+// Flagit fetches this URL from inside the network it is deployed on, so an
+// admin-supplied address is a server-side request forgery vector: pointed at
+// 169.254.169.254 or a neighbouring container it would relay ticket contents
+// to somewhere it should not reach. The admin API is already privileged, but
+// a webhook URL is exactly the kind of field that gets set from a copied
+// config, so it is worth refusing the obviously wrong ones.
+func ValidateWebhookURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: webhook url is not a valid URL", ErrInvalid)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("%w: webhook url must start with http:// or https://", ErrInvalid)
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("%w: webhook url must include a host", ErrInvalid)
+	}
+
+	// A literal IP can be checked directly. A hostname cannot be settled here
+	// without a DNS lookup, which would still be re-resolved at delivery time,
+	// so names are accepted and only obvious loopback aliases are refused.
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("%w: webhook url must not point at a private or loopback address", ErrInvalid)
+		}
+		return nil
+	}
+	if isLoopbackName(host) {
+		return fmt.Errorf("%w: webhook url must not point at a private or loopback address", ErrInvalid)
+	}
+	return nil
+}
+
+// isPrivateIP reports whether ip is in a range that is not routable on the
+// public internet, and therefore not somewhere Hermes legitimately lives.
+func isPrivateIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() {
+		return true
+	}
+	// Carrier-grade NAT (100.64.0.0/10) also covers Tailscale addresses, which
+	// net.IP.IsPrivate does not classify.
+	if v4 := ip.To4(); v4 != nil {
+		return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+	}
+	return false
+}
+
+// isLoopbackName catches the hostnames that resolve to loopback everywhere,
+// so "http://localhost:9000/hook" is refused like 127.0.0.1 would be.
+func isLoopbackName(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
 }

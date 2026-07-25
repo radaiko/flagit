@@ -214,7 +214,7 @@ describe('admin client', () => {
     expect(lastCall(fetchImpl).url).toBe('/internal/tickets/FLG-7X3K9Q');
   });
 
-  it('patches a ticket, defaulting the optional fields', async () => {
+  it('patches a ticket, sending only the fields that were given', async () => {
     const { fetchImpl, client } = build({ body: { data: makeTicket() } });
 
     await client.updateTicket('FLG-7X3K9Q', { status: 'resolved' });
@@ -222,11 +222,37 @@ describe('admin client', () => {
     const { url, init } = lastCall(fetchImpl);
     expect(url).toBe('/internal/tickets/FLG-7X3K9Q');
     expect(init.method).toBe('PATCH');
-    expect(JSON.parse(init.body)).toEqual({
-      status: 'resolved',
+    // shippedVersion is omitted, not sent as '': an empty string would clear
+    // the recorded release rather than leave it alone.
+    expect(JSON.parse(init.body)).toEqual({ status: 'resolved', comment: '' });
+  });
+
+  it('sends a comment on its own, leaving the status alone', async () => {
+    const { fetchImpl, client } = build({ body: { data: makeTicket() } });
+
+    await client.updateTicket('FLG-7X3K9Q', { comment: 'Still looking' });
+
+    expect(JSON.parse(lastCall(fetchImpl).init.body)).toEqual({ comment: 'Still looking' });
+  });
+
+  it('sends an explicit empty version to clear it', async () => {
+    const { fetchImpl, client } = build({ body: { data: makeTicket() } });
+
+    await client.updateTicket('FLG-7X3K9Q', { status: 'open', shippedVersion: '' });
+
+    expect(JSON.parse(lastCall(fetchImpl).init.body)).toEqual({
+      status: 'open',
       shippedVersion: '',
       comment: '',
     });
+  });
+
+  it('passes force through when an admin overrides the workflow', async () => {
+    const { fetchImpl, client } = build({ body: { data: makeTicket() } });
+
+    await client.updateTicket('FLG-7X3K9Q', { status: 'shipped', force: true });
+
+    expect(JSON.parse(lastCall(fetchImpl).init.body)).toMatchObject({ force: true });
   });
 
   it('patches a ticket with a version and a comment', async () => {
@@ -250,10 +276,7 @@ describe('admin client', () => {
 
     await client.updateTicket('FLG-7X3K9Q');
 
-    expect(JSON.parse(lastCall(fetchImpl).init.body)).toEqual({
-      shippedVersion: '',
-      comment: '',
-    });
+    expect(JSON.parse(lastCall(fetchImpl).init.body)).toEqual({ comment: '' });
   });
 
   it('posts an agent message', async () => {
@@ -273,11 +296,22 @@ describe('admin client', () => {
 
     const { url, init } = lastCall(fetchImpl);
     expect(url).toBe('/internal/tickets/batch');
+    // force defaults to true: a release sweep routinely moves tickets straight
+    // to shipped, which the normal workflow does not allow.
     expect(JSON.parse(init.body)).toEqual({
       ticketIds: ['FLG-A', 'FLG-B'],
       status: 'shipped',
       shippedVersion: '1.5.0',
+      force: true,
     });
+  });
+
+  it('can apply a batch without overriding the workflow', async () => {
+    const { fetchImpl, client } = build({ body: { data: {} } });
+
+    await client.batchUpdate(['FLG-A'], 'closed', '', false);
+
+    expect(JSON.parse(lastCall(fetchImpl).init.body)).toMatchObject({ force: false });
   });
 
   it('defaults the batch version to empty', async () => {
@@ -323,5 +357,67 @@ describe('admin client', () => {
     const { client } = build({ ok: false, status: 401, body: { error: 'invalid admin key' } });
 
     await expect(client.getSettings()).rejects.toMatchObject({ messageKey: 'admin.keyInvalid' });
+  });
+});
+
+describe('ticket paging', () => {
+  const build = (options) => {
+    const fetchImpl = stubFetch(options);
+    return { fetchImpl, client: createAdminClient({ adminKey: 'admin-key', fetchImpl }) };
+  };
+
+  it('unwraps the page object into a plain array', async () => {
+    const { client } = build({
+      body: {
+        data: { tickets: [makeTicket()], total: 1, limit: 100, offset: 0, hasMore: false },
+      },
+    });
+
+    const tickets = await client.listTickets();
+
+    expect(Array.isArray(tickets)).toBe(true);
+    expect(tickets).toHaveLength(1);
+    expect(tickets[0].id).toBe('FLG-7X3K9Q');
+  });
+
+  it('exposes the paging metadata', async () => {
+    const { fetchImpl, client } = build({
+      body: {
+        data: { tickets: [makeTicket()], total: 42, limit: 1, offset: 10, hasMore: true },
+      },
+    });
+
+    const page = await client.listTicketPage({ limit: 1, offset: 10 });
+
+    expect(page).toMatchObject({ total: 42, limit: 1, offset: 10, hasMore: true });
+    expect(lastCall(fetchImpl).url).toBe('/internal/tickets?limit=1&offset=10');
+  });
+
+  it('sends limit=0 rather than dropping it', async () => {
+    const { fetchImpl, client } = build({ body: { data: { tickets: [], total: 7 } } });
+
+    const page = await client.listTicketPage({ limit: 0 });
+
+    // limit=0 asks for the count without the rows; a falsy check would drop it.
+    expect(lastCall(fetchImpl).url).toBe('/internal/tickets?limit=0');
+    expect(page.total).toBe(7);
+  });
+
+  it('copes with a server that returns a bare array', async () => {
+    const { client } = build({ body: { data: [makeTicket()] } });
+
+    const page = await client.listTicketPage();
+
+    expect(page.tickets).toHaveLength(1);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('copes with an empty response', async () => {
+    const { client } = build({ body: { data: null } });
+
+    const page = await client.listTicketPage();
+
+    expect(page.tickets).toEqual([]);
+    expect(page.total).toBe(0);
   });
 });

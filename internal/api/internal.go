@@ -8,6 +8,7 @@ import (
 
 	"flagit/internal/db"
 	"flagit/internal/model"
+	"flagit/internal/service"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -56,10 +57,7 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	effective := limit
-	if effective <= 0 {
-		effective = db.DefaultPageSize
-	}
+	effective := effectiveLimit(limit)
 	s.writeJSON(w, http.StatusOK, pollResponse{
 		Tickets: tickets,
 		Since:   since,
@@ -70,18 +68,37 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 	}, "")
 }
 
-// intParam parses an optional non-negative integer query parameter. It writes
-// the error response itself and reports whether the caller should continue.
-func (s *Server) intParam(w http.ResponseWriter, raw, name string) (int, bool) {
+// intParam parses an optional non-negative integer query parameter, returning
+// nil when the parameter is absent so callers can tell "unset" from an
+// explicit zero. It writes the error response itself and reports whether the
+// caller should continue.
+func (s *Server) intParam(w http.ResponseWriter, raw, name string) (*int, bool) {
 	if raw == "" {
-		return 0, true
+		return nil, true
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < 0 {
 		s.writeError(w, http.StatusBadRequest, name+" must be a non-negative integer")
-		return 0, false
+		return nil, false
 	}
-	return value, true
+	return &value, true
+}
+
+// effectiveLimit reports the page size actually applied, so a response can
+// tell a caller what it got rather than what it asked for.
+func effectiveLimit(limit *int) int {
+	if limit == nil {
+		return db.DefaultPageSize
+	}
+	return min(*limit, db.MaxPageSize)
+}
+
+// intOrZero dereferences an optional integer parameter.
+func intOrZero(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // ticketPage is a page of tickets plus what a caller needs to walk the rest.
@@ -111,7 +128,7 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	filter.Limit, filter.Offset = limit, offset
+	filter.Limit, filter.Offset = limit, intOrZero(offset)
 
 	tickets, err := s.Service.ListTickets(filter)
 	if err != nil {
@@ -124,16 +141,12 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	effective := limit
-	if effective <= 0 {
-		effective = db.DefaultPageSize
-	}
 	s.writeJSON(w, http.StatusOK, ticketPage{
 		Tickets: tickets,
 		Total:   total,
-		Limit:   effective,
-		Offset:  offset,
-		HasMore: offset+len(tickets) < total,
+		Limit:   effectiveLimit(limit),
+		Offset:  filter.Offset,
+		HasMore: filter.Offset+len(tickets) < total,
 	}, "")
 }
 
@@ -194,21 +207,23 @@ func (s *Server) handleAgentMessage(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusCreated, m, "message posted")
 }
 
-// updateTicketRequest patches a ticket's status, optionally adding an agent
-// comment in the same call.
+// updateTicketRequest patches a ticket. Every field is optional: send a status
+// to move the ticket, a comment to reply, or both.
 //
-// ShippedVersion is a pointer so an omitted field ("leave the recorded release
-// alone") is distinguishable from an explicit empty one ("this is no longer
-// shipped").
+// Status and ShippedVersion are pointers so an omitted field ("leave it alone")
+// is distinguishable from an explicit empty one ("this is no longer shipped").
 type updateTicketRequest struct {
-	Status         model.Status `json:"status"`
-	ShippedVersion *string      `json:"shippedVersion"`
-	Comment        string       `json:"comment"`
+	Status         *model.Status `json:"status"`
+	ShippedVersion *string       `json:"shippedVersion"`
+	Comment        string        `json:"comment"`
+	// Force skips workflow validation, for an admin correcting a ticket that
+	// is in the wrong state.
+	Force bool `json:"force"`
 }
 
-// handleUpdateTicket applies a status change from Hermes or an admin. The
-// status change and the comment are written in one transaction, so a failed
-// comment cannot leave the ticket silently moved.
+// handleUpdateTicket applies a status change and/or a comment from Hermes or
+// an admin. Both are written in one transaction, so a failed comment cannot
+// leave the ticket silently moved.
 func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 	var req updateTicketRequest
 	if err := decodeJSON(w, r, &req); err != nil {
@@ -216,8 +231,12 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := s.Service.UpdateStatusWithComment(
-		chi.URLParam(r, "id"), req.Status, req.ShippedVersion, req.Comment)
+	ticket, err := s.Service.ApplyUpdate(chi.URLParam(r, "id"), service.StatusUpdate{
+		Status:         req.Status,
+		ShippedVersion: req.ShippedVersion,
+		Comment:        req.Comment,
+		Force:          req.Force,
+	})
 	if err != nil {
 		s.writeServiceError(w, err)
 		return
@@ -264,6 +283,9 @@ type batchRequest struct {
 	TicketIDs      []string     `json:"ticketIds"`
 	Status         model.Status `json:"status"`
 	ShippedVersion string       `json:"shippedVersion"`
+	// Force skips workflow validation. A release sweep routinely moves tickets
+	// straight to shipped, so the dashboard sets this.
+	Force bool `json:"force"`
 }
 
 // handleBatchUpdate applies one status to many tickets.
@@ -274,7 +296,7 @@ func (s *Server) handleBatchUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.Service.BatchUpdateStatus(req.TicketIDs, req.Status, req.ShippedVersion)
+	result, err := s.Service.BatchUpdateStatus(req.TicketIDs, req.Status, req.ShippedVersion, req.Force)
 	if err != nil {
 		s.writeServiceError(w, err)
 		return

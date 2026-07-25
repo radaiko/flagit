@@ -333,6 +333,13 @@ func TestUpdateTicketShippedVersion(t *testing.T) {
 	h := newHarness(t)
 	ticket := createTicket(t, h)
 
+	// Walk the documented workflow to reach shipped.
+	for _, status := range []string{"in-progress", "resolved"} {
+		step := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
+			map[string]any{"status": status}, adminHeaders())
+		require.Equal(t, http.StatusOK, step.Code, "body: %s", step.Body.String())
+	}
+
 	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
 		map[string]any{"status": "shipped", "shippedVersion": "1.5.0"}, adminHeaders())
 
@@ -340,6 +347,60 @@ func TestUpdateTicketShippedVersion(t *testing.T) {
 	var got model.Ticket
 	decodeData(t, rec, &got)
 	assert.Equal(t, "1.5.0", got.ShippedVersion)
+}
+
+func TestUpdateTicketRejectsAWorkflowSkip(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
+		map[string]any{"status": "shipped"}, adminHeaders())
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, errorMessage(t, rec), "cannot move a ticket")
+}
+
+func TestUpdateTicketForceOverridesTheWorkflow(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
+		map[string]any{"status": "shipped", "force": true}, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got model.Ticket
+	decodeData(t, rec, &got)
+	assert.Equal(t, model.StatusShipped, got.Status)
+}
+
+func TestUpdateTicketAcceptsACommentAlone(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
+		map[string]any{"comment": "Still looking into this"}, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var got model.Ticket
+	decodeData(t, rec, &got)
+	assert.Equal(t, model.StatusOpen, got.Status, "the status is untouched")
+
+	messages := do(t, h.internal, http.MethodGet, "/internal/tickets/"+ticket.ID+"/messages", nil, adminHeaders())
+	var conversation []*model.Message
+	decodeData(t, messages, &conversation)
+	require.Len(t, conversation, 1)
+	assert.Equal(t, "Still looking into this", conversation[0].Body)
+}
+
+func TestUpdateTicketRejectsAnEmptyPatch(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
+		map[string]any{}, adminHeaders())
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, errorMessage(t, rec), "provide a status, a comment, or both")
 }
 
 func TestUpdateTicketErrors(t *testing.T) {
@@ -435,13 +496,15 @@ func TestBatchUpdateEndpoint(t *testing.T) {
 		"ticketIds":      []string{first.ID, second.ID, "FLG-ZZZZZZ"},
 		"status":         "shipped",
 		"shippedVersion": "1.5.0",
+		"force":          true,
 	}, adminHeaders())
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var result service.BatchResult
 	decodeData(t, rec, &result)
 	assert.ElementsMatch(t, []string{first.ID, second.ID}, result.Updated)
-	assert.Contains(t, result.Failed, "FLG-ZZZZZZ")
+	assert.Equal(t, service.ReasonNotFound, result.Failed["FLG-ZZZZZZ"],
+		"a stable reason code, not a raw error string")
 
 	got := do(t, h.internal, http.MethodGet, "/internal/tickets?status=shipped", nil, adminHeaders())
 	var page ticketPage
@@ -735,4 +798,86 @@ func TestUnknownTicketIDShapesAreRejectedConsistently(t *testing.T) {
 	}
 }
 
-var _ = db.ErrNotFound // keep the db import meaningful across build tags
+func TestListTicketsPaging(t *testing.T) {
+	h := newHarness(t)
+	for i := 0; i < 5; i++ {
+		createTicket(t, h)
+	}
+
+	first := do(t, h.internal, http.MethodGet, "/internal/tickets?limit=2", nil, adminHeaders())
+	require.Equal(t, http.StatusOK, first.Code)
+	var page ticketPage
+	decodeData(t, first, &page)
+	assert.Len(t, page.Tickets, 2)
+	assert.Equal(t, 5, page.Total, "the total ignores the page size")
+	assert.Equal(t, 2, page.Limit)
+	assert.True(t, page.HasMore)
+
+	last := do(t, h.internal, http.MethodGet, "/internal/tickets?limit=2&offset=4", nil, adminHeaders())
+	decodeData(t, last, &page)
+	assert.Len(t, page.Tickets, 1)
+	assert.Equal(t, 4, page.Offset)
+	assert.False(t, page.HasMore, "the final page says so")
+}
+
+func TestListTicketsZeroLimitReturnsTheCountOnly(t *testing.T) {
+	h := newHarness(t)
+	createTicket(t, h)
+	createTicket(t, h)
+
+	// limit=0 is how a caller asks "how many are there?" without paying to
+	// transfer any of them. It must not be read as "unlimited".
+	rec := do(t, h.internal, http.MethodGet, "/internal/tickets?limit=0", nil, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var page ticketPage
+	decodeData(t, rec, &page)
+	assert.Empty(t, page.Tickets)
+	assert.Equal(t, 2, page.Total)
+	assert.True(t, page.HasMore)
+}
+
+func TestPollZeroLimitReturnsNothing(t *testing.T) {
+	h := newHarness(t)
+	createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodGet, "/internal/poll?limit=0", nil, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp pollResponse
+	decodeData(t, rec, &resp)
+	assert.Empty(t, resp.Tickets)
+	assert.Equal(t, 0, resp.Count)
+}
+
+func TestPollReportsWhenMoreIsWaiting(t *testing.T) {
+	h := newHarness(t)
+	createTicket(t, h)
+	createTicket(t, h)
+	createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodGet, "/internal/poll?limit=2", nil, adminHeaders())
+
+	var resp pollResponse
+	decodeData(t, rec, &resp)
+	assert.Len(t, resp.Tickets, 2)
+	assert.Equal(t, 2, resp.Limit)
+	assert.True(t, resp.HasMore, "a full page means the poller should come straight back")
+}
+
+func TestListAndPollRejectBadPagingParams(t *testing.T) {
+	h := newHarness(t)
+
+	for _, path := range []string{
+		"/internal/tickets?offset=abc",
+		"/internal/tickets?offset=-1",
+		"/internal/poll?limit=abc",
+		"/internal/poll?limit=-1",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := do(t, h.internal, http.MethodGet, path, nil, adminHeaders())
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}

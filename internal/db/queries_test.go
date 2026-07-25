@@ -128,7 +128,7 @@ func TestListTicketsFilters(t *testing.T) {
 		{"by status", TicketFilter{Status: model.StatusClosed}, 1},
 		{"by app and status", TicketFilter{AppName: "notes", Status: model.StatusOpen}, 2},
 		{"unknown app", TicketFilter{AppName: "ghost"}, 0},
-		{"limited", TicketFilter{Limit: 2}, 2},
+		{"limited", TicketFilter{Limit: intPtr(2)}, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,6 +162,27 @@ func TestCountTickets(t *testing.T) {
 	n, err := d.CountTickets(TicketFilter{AppName: "notes"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
+
+	all, err := d.CountTickets(TicketFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, all)
+}
+
+func TestCountTicketsIgnoresPaging(t *testing.T) {
+	d := newTestDB(t)
+	for i := 0; i < 5; i++ {
+		require.NoError(t, d.CreateTicket(newTicket("notes")))
+	}
+
+	// The count is the total a paginated caller needs, so Limit and Offset
+	// must not narrow it — otherwise "page 1 of N" would always read "1 of 1".
+	n, err := d.CountTickets(TicketFilter{Limit: intPtr(2), Offset: 3})
+	require.NoError(t, err)
+	assert.Equal(t, 5, n)
+
+	page, err := d.ListTickets(TicketFilter{Limit: intPtr(2), Offset: 3})
+	require.NoError(t, err)
+	assert.Len(t, page, 2, "the listing is paged even though the count is not")
 }
 
 func TestUpdateTicketStatus(t *testing.T) {
@@ -209,14 +230,14 @@ func TestPollTickets(t *testing.T) {
 	second := newTicket("notes")
 	require.NoError(t, d.CreateTicket(second))
 
-	changed, err := d.PollTickets(cutoff, 100)
+	changed, err := d.PollTickets(cutoff, intPtr(100))
 	require.NoError(t, err)
 	require.Len(t, changed, 1)
 	assert.Equal(t, second.ID, changed[0].ID)
 
 	// An update to an older ticket brings it back into the poll window.
 	require.NoError(t, d.UpdateTicketStatus(first.ID, model.StatusInProgress, ""))
-	changed, err = d.PollTickets(cutoff, 100)
+	changed, err = d.PollTickets(cutoff, intPtr(100))
 	require.NoError(t, err)
 	require.Len(t, changed, 2)
 	assert.Equal(t, second.ID, changed[0].ID, "oldest change first")
@@ -228,7 +249,7 @@ func TestPollTicketsFromEpochReturnsEverything(t *testing.T) {
 	require.NoError(t, d.CreateTicket(newTicket("notes")))
 	require.NoError(t, d.CreateTicket(newTicket("timer")))
 
-	got, err := d.PollTickets(time.Time{}, 0)
+	got, err := d.PollTickets(time.Time{}, nil)
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
 }
@@ -236,7 +257,7 @@ func TestPollTicketsFromEpochReturnsEverything(t *testing.T) {
 func TestPollTicketsEmpty(t *testing.T) {
 	d := newTestDB(t)
 
-	got, err := d.PollTickets(time.Now(), 0)
+	got, err := d.PollTickets(time.Now(), nil)
 	require.NoError(t, err)
 	assert.NotNil(t, got, "an empty poll serialises as [] not null")
 	assert.Empty(t, got)
@@ -465,7 +486,7 @@ func TestQueriesFailOnClosedDB(t *testing.T) {
 	assert.Error(t, err)
 	_, err = d.ListTickets(TicketFilter{})
 	assert.Error(t, err)
-	_, err = d.PollTickets(time.Time{}, 0)
+	_, err = d.PollTickets(time.Time{}, nil)
 	assert.Error(t, err)
 	assert.Error(t, d.UpdateTicketStatus("FLG-ABC123", model.StatusOpen, ""))
 	assert.Error(t, d.UpdateTicketStatus("FLG-ABC123", model.StatusShipped, "1.0"))
@@ -546,3 +567,65 @@ func TestIsUniqueViolation(t *testing.T) {
 type assertError string
 
 func (e assertError) Error() string { return string(e) }
+
+// intPtr is for the optional paging fields.
+func intPtr(v int) *int { return &v }
+
+func TestPagingTreatsZeroLimitAsNoRows(t *testing.T) {
+	d := newTestDB(t)
+	for i := 0; i < 3; i++ {
+		require.NoError(t, d.CreateTicket(newTicket("notes")))
+	}
+
+	// An explicit limit of 0 means "none", not "unlimited" — that is how a
+	// caller asks for the total count without transferring any tickets.
+	none, err := d.ListTickets(TicketFilter{Limit: intPtr(0)})
+	require.NoError(t, err)
+	assert.Empty(t, none)
+
+	// An absent limit takes the default page size.
+	all, err := d.ListTickets(TicketFilter{})
+	require.NoError(t, err)
+	assert.Len(t, all, 3)
+
+	polled, err := d.PollTickets(time.Time{}, intPtr(0))
+	require.NoError(t, err)
+	assert.Empty(t, polled)
+}
+
+func TestPagingClampsAnOversizedLimit(t *testing.T) {
+	limit, offset := page(intPtr(MaxPageSize*10), 0)
+
+	assert.Equal(t, MaxPageSize, limit)
+	assert.Equal(t, 0, offset)
+}
+
+func TestPagingRejectsNegativeValues(t *testing.T) {
+	limit, offset := page(intPtr(-5), -3)
+
+	assert.Equal(t, 0, limit, "a negative limit returns nothing rather than everything")
+	assert.Equal(t, 0, offset)
+}
+
+func TestCreateMessageRollsBackWhenTheTicketVanishes(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+
+	// Foreign keys are on, so this leaves no ticket for the touch to update.
+	_, err := d.SQL().Exec(`PRAGMA foreign_keys = OFF`)
+	require.NoError(t, err)
+	_, err = d.SQL().Exec(`DELETE FROM tickets WHERE id = ?`, ticket.ID)
+	require.NoError(t, err)
+
+	m := &model.Message{TicketID: ticket.ID, Body: "orphan", Role: model.RoleUser}
+	err = d.CreateMessage(m)
+
+	require.ErrorIs(t, err, ErrNotFound)
+	assert.Zero(t, m.ID, "no ID is handed back for a rolled-back row")
+
+	// The insert must not have survived the failed touch.
+	messages, err := d.ListMessagesByTicket(ticket.ID)
+	require.NoError(t, err)
+	assert.Empty(t, messages, "the message was rolled back with the touch")
+}

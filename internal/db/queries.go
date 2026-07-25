@@ -88,26 +88,34 @@ const MaxPageSize = 1000
 
 // TicketFilter narrows a ticket listing. The zero value lists the first
 // DefaultPageSize tickets, newest first.
+//
+// Limit is a *int so "no limit given" is distinguishable from "limit 0". A nil
+// Limit takes DefaultPageSize; a Limit of 0 returns no rows, which is how a
+// caller asks for the total count without transferring any tickets.
 type TicketFilter struct {
 	AppName string
 	Status  model.Status
 	Type    model.TicketType
-	Limit   int
+	Limit   *int
 	Offset  int
 }
 
 // page returns the limit and offset to apply, clamped to sane bounds.
-func page(limit, offset int) (int, int) {
-	if limit <= 0 {
-		limit = DefaultPageSize
+func page(limit *int, offset int) (int, int) {
+	size := DefaultPageSize
+	if limit != nil {
+		size = *limit
 	}
-	if limit > MaxPageSize {
-		limit = MaxPageSize
+	if size < 0 {
+		size = 0
+	}
+	if size > MaxPageSize {
+		size = MaxPageSize
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	return limit, offset
+	return size, offset
 }
 
 // ListTickets returns tickets matching filter, newest first.
@@ -140,7 +148,7 @@ func (d *DB) ListTickets(f TicketFilter) ([]*model.Ticket, error) {
 // first, so a poller can walk forward through the stream. The page is bounded;
 // a poller that receives a full page should immediately poll again using the
 // last returned UpdatedAt as its new cursor.
-func (d *DB) PollTickets(since time.Time, limit int) ([]*model.Ticket, error) {
+func (d *DB) PollTickets(since time.Time, limit *int) ([]*model.Ticket, error) {
 	size, _ := page(limit, 0)
 	return d.queryTickets(`SELECT `+ticketColumns+` FROM tickets
 		WHERE updated_at > ? ORDER BY updated_at ASC, id ASC LIMIT ?`,
@@ -285,15 +293,42 @@ func (d *DB) CreateMessage(m *model.Message) error {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = d.Now().UTC()
 	}
-	res, err := d.sql.Exec(`INSERT INTO messages (ticket_id, body, role, created_at) VALUES (?,?,?,?)`,
+
+	// Both writes go in one transaction: a message that landed without its
+	// ticket's updated_at moving would be invisible to Hermes' poller, which
+	// is a silently dropped reply rather than a visible failure.
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(`INSERT INTO messages (ticket_id, body, role, created_at) VALUES (?,?,?,?)`,
 		m.TicketID, m.Body, string(m.Role), FormatTime(m.CreatedAt))
 	if err != nil {
 		return err
 	}
-	if m.ID, err = res.LastInsertId(); err != nil {
+	id, err := res.LastInsertId()
+	if err != nil {
 		return err
 	}
-	return d.TouchTicket(m.TicketID)
+
+	touched, err := tx.Exec(`UPDATE tickets SET updated_at = ? WHERE id = ?`,
+		FormatTime(d.Now()), m.TicketID)
+	if err != nil {
+		return err
+	}
+	if err := expectOneRow(touched); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Assigned only after the commit succeeds, so a caller never holds an ID
+	// for a row that was rolled back.
+	m.ID = id
+	return nil
 }
 
 // ListMessagesByTicket returns a ticket's conversation in chronological order.

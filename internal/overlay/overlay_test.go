@@ -187,3 +187,38 @@ func TestDevProxyRejectsBadURL(t *testing.T) {
 
 	assert.ErrorContains(t, err, "parse vite url")
 }
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	h := spaHandler(fakeBuild(), overlayEntry, "")
+
+	// Both the entry HTML and a static asset: an asset served without nosniff
+	// is exactly the case a content-type confusion attack needs.
+	for _, path := range []string{"/", "/client-route", "/assets/app.js"} {
+		t.Run(path, func(t *testing.T) {
+			rec := request(t, h, path)
+
+			assert.Equal(t, ContentSecurityPolicy, rec.Header().Get("Content-Security-Policy"))
+			assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+			assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"))
+			assert.Equal(t, "SAMEORIGIN", rec.Header().Get("X-Frame-Options"))
+		})
+	}
+}
+
+func TestContentSecurityPolicyBlocksInlineScript(t *testing.T) {
+	// Styles need the inline exemption because Svelte injects component CSS at
+	// runtime; scripts must never get it, or the policy stops being a defence.
+	assert.Contains(t, ContentSecurityPolicy, "script-src 'self'")
+	assert.NotContains(t, ContentSecurityPolicy, "script-src 'self' 'unsafe-inline'")
+	assert.Contains(t, ContentSecurityPolicy, "object-src 'none'")
+	assert.Contains(t, ContentSecurityPolicy, "base-uri 'none'")
+}
+
+func TestSecurityHeadersOnTheNotBuiltResponse(t *testing.T) {
+	h := spaHandler(fstest.MapFS{}, overlayEntry, "")
+
+	rec := request(t, h, "/")
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+}

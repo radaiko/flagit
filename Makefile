@@ -5,6 +5,7 @@ WEB_DIST    := web/dist
 EMBED_DIST  := internal/overlay/dist
 DB_PATH     ?= ./data/flagit.db
 DOCKER_TAG  ?= flagit
+COVERAGE_MIN ?= 90
 
 .PHONY: help dev dev-web test test-go test-web coverage build web clean docker docker-run fmt vet lint
 
@@ -35,9 +36,16 @@ test-go: ## Run the Go tests
 test-web: ## Run the Svelte tests
 	cd web && npm run test
 
-coverage: ## Report test coverage for both halves
+coverage: ## Report test coverage for both halves, failing below the target
 	go test ./... -coverprofile=coverage.out
-	go tool cover -func=coverage.out | tail -1
+	@go tool cover -func=coverage.out | tail -1
+	@total=$$(go tool cover -func=coverage.out | awk '/^total:/ {print $$3}' | tr -d '%'); \
+		awk -v got="$$total" -v want=$(COVERAGE_MIN) 'BEGIN { \
+			if (got + 0 < want + 0) { \
+				printf "FAIL: Go coverage %.1f%% is below the %s%% target\n", got, want; exit 1 \
+			} \
+			printf "Go coverage %.1f%% meets the %s%% target\n", got, want \
+		}'
 	cd web && npm run coverage
 
 fmt: ## Format the Go sources

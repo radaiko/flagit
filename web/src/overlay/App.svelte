@@ -5,7 +5,12 @@
    * needs a wide viewport.
    */
   import { untrack } from 'svelte';
-  import { t, detectLanguage, rememberLanguage } from '../lib/i18n.js';
+  import {
+    t,
+    detectLanguage,
+    rememberLanguage,
+    applyDocumentLanguage,
+  } from '../lib/i18n.js';
   import { resolveDeviceToken } from '../lib/device.js';
   import { createPublicClient } from '../lib/api.js';
   import LanguageToggle from '../lib/LanguageToggle.svelte';
@@ -32,7 +37,14 @@
   function setLanguage(next) {
     lang = next;
     rememberLanguage(next);
+    applyDocumentLanguage(next);
   }
+
+  // Also on mount: the detected language rarely matches the "en" hard-coded in
+  // the served HTML.
+  $effect(() => {
+    applyDocumentLanguage(lang);
+  });
 
   function showTicket(id) {
     lookupId = id ?? '';

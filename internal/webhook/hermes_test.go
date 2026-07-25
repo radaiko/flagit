@@ -301,3 +301,54 @@ func TestNewSenderDefaults(t *testing.T) {
 	assert.Equal(t, DefaultBaseDelay, s.BaseDelay)
 	assert.Equal(t, 10*time.Second, s.Client.Timeout)
 }
+
+func TestGoTracksDeliveriesForShutdown(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan struct{})
+	s := NewSender(slog.New(slog.DiscardHandler))
+
+	s.Go(func() {
+		close(started)
+		<-release
+	})
+	<-started
+
+	// A delivery is still running, so Wait must not return.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	assert.False(t, s.Wait(ctx), "Wait returned while a delivery was in flight")
+
+	close(release)
+
+	drained, cancelDrain := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelDrain()
+	assert.True(t, s.Wait(drained), "Wait did not return after the delivery finished")
+}
+
+func TestWaitReturnsImmediatelyWhenIdle(t *testing.T) {
+	s := NewSender(slog.New(slog.DiscardHandler))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	assert.True(t, s.Wait(ctx))
+}
+
+func TestGoRunsTheDelivery(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := NewSender(slog.New(slog.DiscardHandler))
+	s.Go(func() {
+		_ = s.Send(context.Background(), srv.URL, PayloadFor(testTicket(), ""))
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.True(t, s.Wait(ctx))
+	assert.Equal(t, int32(1), calls.Load())
+}

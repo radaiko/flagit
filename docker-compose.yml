@@ -8,11 +8,11 @@ services:
     ports:
       # Public API and web overlay — this is the one apps talk to.
       - "8080:8080"
-      # Internal API and admin dashboard. Published on all interfaces here for
-      # a straightforward local run; on a public host, bind it to the Tailscale
-      # address instead ("100.x.y.z:3000:3000") so it is never reachable from
-      # the internet.
-      - "3000:3000"
+      # Internal API and admin dashboard. Bound to loopback so it is never
+      # reachable from the internet by default: reach it over an SSH tunnel, or
+      # bind it to this host's Tailscale address instead ("100.x.y.z:3000:3000")
+      # to expose it to your tailnet only.
+      - "127.0.0.1:3000:3000"
 
     volumes:
       - flagit_data:/data

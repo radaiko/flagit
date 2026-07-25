@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"flagit/internal/model"
@@ -75,6 +76,40 @@ type Sender struct {
 
 	// Sleep is the backoff hook; tests replace it to avoid real waiting.
 	Sleep func(time.Duration)
+
+	// inFlight counts deliveries that have started but not finished, so a
+	// shutdown can wait for them instead of dropping a ticket that was
+	// accepted but never announced.
+	inFlight sync.WaitGroup
+}
+
+// Go runs fn as a tracked delivery. Wait blocks until every fn started this
+// way has returned, which is what makes graceful shutdown actually graceful:
+// a webhook is fired after the HTTP response has already gone back to the
+// reporter, so nothing else is holding it.
+func (s *Sender) Go(fn func()) {
+	s.inFlight.Add(1)
+	go func() {
+		defer s.inFlight.Done()
+		fn()
+	}()
+}
+
+// Wait blocks until every in-flight delivery has finished, or until ctx is
+// done. It reports whether everything drained in time.
+func (s *Sender) Wait(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() {
+		s.inFlight.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // NewSender returns a Sender with production defaults.
