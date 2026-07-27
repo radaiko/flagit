@@ -35,4 +35,4 @@ Full requirements and architecture: see [Flagit.md](https://github.com/radaiko/f
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
