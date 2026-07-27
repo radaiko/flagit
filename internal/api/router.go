@@ -110,6 +110,11 @@ func (s *Server) InternalRouter() http.Handler {
 	// The dashboard SPA authenticates in the browser with the admin key, so it
 	// is served without the middleware that its own API calls go through.
 	if s.Dashboard != nil {
+		// Static assets referenced by the SPA (JS, CSS) are served from the
+		// overlay's embedded dist under /assets/. They must be accessible
+		// without the admin key — the browser loads them via <script>/<link>
+		// tags that don't carry custom headers.
+		r.Handle("/assets/*", s.Overlay)
 		r.Handle("/internal/admin", s.Dashboard)
 		r.Handle("/internal/admin/*", s.Dashboard)
 	}
