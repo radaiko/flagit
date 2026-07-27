@@ -21,6 +21,7 @@
   import TicketList from './TicketList.svelte';
   import TicketDetail from './TicketDetail.svelte';
   import Settings from './Settings.svelte';
+  import Help from './Help.svelte';
 
   const KEY_STORAGE = 'flagit.adminKey';
 
@@ -124,6 +125,14 @@
         >
           {t('admin.navSettings', lang)}
         </button>
+        <button
+          type="button"
+          class="nav"
+          class:current={view === 'help'}
+          onclick={() => show('help')}
+        >
+          {t('admin.navHelp', lang)}
+        </button>
       </nav>
 
       <div class="row">
@@ -135,6 +144,8 @@
     <main>
       {#if view === 'settings'}
         <Settings {client} {lang} />
+      {:else if view === 'help'}
+        <Help {lang} />
       {:else if openTicketId}
         <TicketDetail
           {client}

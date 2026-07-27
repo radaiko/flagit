@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API reference — Flagit</title>
+    <meta
+      name="description"
+      content="Flagit HTTP API: the public endpoints apps call with a device token, and the internal endpoints Hermes and the admin dashboard call with the admin key."
+    />
+    <meta name="theme-color" content="#14161a" />
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23ff6a33' d='M3 1h10v14H3l3-7z'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand mono" href="index.html">Flagit</a>
+        <nav class="site-nav">
+          <a href="index.html">Overview</a>
+          <a href="api.html" aria-current="page">API</a>
+          <a href="deployment.html">Deployment</a>
+          <a href="https://github.com/radaiko/flagit">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap prose" style="padding-block: var(--space-7) var(--space-8)">
+      <span class="eyebrow">Reference</span>
+      <h1>API</h1>
+      <p class="lede">
+        Two HTTP surfaces on two ports. The <strong>public API</strong> on <code>:8080</code> is
+        what your apps call, authorised by a per-device ownership token. The
+        <strong>internal API</strong> on <code>:3000</code> is what Hermes and the admin dashboard
+        call, authorised by the admin key — it must not be exposed to the internet.
+      </p>
+
+      <nav class="toc" aria-label="On this page">
+        <span class="eyebrow">On this page</span>
+        <ul>
+          <li><a href="#conventions">Conventions</a></li>
+          <li><a href="#auth">Authentication</a></li>
+          <li><a href="#public">Public API</a></li>
+          <li><a href="#internal">Internal API</a></li>
+          <li><a href="#webhook">Hermes webhook</a></li>
+          <li><a href="#models">Models</a></li>
+          <li><a href="#errors">Errors</a></li>
+        </ul>
+      </nav>
+
+      <h2 id="conventions">Conventions</h2>
+      <p>
+        Every response is JSON. Successes are wrapped in an envelope; failures carry a single
+        <code>error</code> string. Timestamps are RFC 3339 in UTC. Request bodies are capped at
+        4&nbsp;MiB, and unknown fields are rejected rather than silently dropped, so a typo in a key
+        is reported instead of ignored.
+      </p>
+
+      <pre><code>// success
+{ "data": { "id": "FLG-7X3K9Q", "status": "open" }, "message": "ticket created" }
+
+// failure
+{ "error": "invalid device token for this ticket" }</code></pre>
+
+      <p>
+        Listing endpoints take <code>limit</code> and <code>offset</code>. <code>limit</code>
+        defaults to <code>100</code> and is capped at <code>1000</code>; the response reports the
+        limit that was actually applied along with <code>hasMore</code>.
+      </p>
+
+      <h2 id="auth">Authentication</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Surface</th>
+              <th>Header</th>
+              <th>What it is</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Public <code>/api/*</code></td>
+              <td><code>X-Device-Token</code></td>
+              <td>
+                A UUID minted by the client on first use. The server stores only its SHA-256 hash.
+                Whoever holds the token owns the tickets filed with it; there is no recovery.
+              </td>
+            </tr>
+            <tr>
+              <td>Internal <code>/internal/*</code></td>
+              <td><code>X-Admin-Key</code> or <code>Authorization: Bearer …</code></td>
+              <td>
+                Generated and printed once on first start unless <code>FLAGIT_ADMIN_KEY</code> is
+                set. Only its hash is stored, and it is compared in constant time.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note note-danger">
+        <strong>Tokens go in headers, never in the URL.</strong> A credential in a query string ends
+        up in access logs, browser history and the <code>Referer</code> of any outbound link. The
+        overlay accepts <code>?token=</code> once from a host app on load, then strips it from the
+        address bar and sends it as a header from then on.
+      </div>
+
+      <h2 id="public">Public API — port 8080</h2>
+      <p>
+        Served with permissive CORS (<code>Access-Control-Allow-Origin: *</code>), because every
+        endpoint is authorised by an unguessable token and no cookies are involved.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Endpoint</th>
+              <th>Auth</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/healthz</code></td>
+              <td>none</td>
+              <td>Liveness. Returns <code>{"status":"ok"}</code>. Used by the container check.</td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-post">POST</span> <code>/api/tickets</code></td>
+              <td>token in body or header</td>
+              <td>
+                Create a ticket. The only endpoint reachable without a header credential, because
+                this is the call that establishes ownership. Rate limited to 10 requests per minute
+                per client.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/api/tickets/{id}</code></td>
+              <td><code>X-Device-Token</code></td>
+              <td>
+                The ticket with its conversation. Logs are not echoed back — the reporter sent them.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/api/tickets/{id}/messages</code></td>
+              <td><code>X-Device-Token</code></td>
+              <td>Just the conversation, oldest first.</td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-post">POST</span> <code>/api/tickets/{id}/messages</code>
+              </td>
+              <td><code>X-Device-Token</code></td>
+              <td>Append a reply from the reporter.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Create a ticket</h3>
+      <pre><code>curl -X POST https://flagit.example.com/api/tickets \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "bug",
+    "title": "The app closes when I tap save",
+    "body": "Tapped save on a new note, the app closed straight away.",
+    "deviceToken": "6f1c2f4e-6c2a-4c1e-9b6c-1f0a2d3e4b5c",
+    "appName": "notes",
+    "appVersion": "1.4.2",
+    "os": "iOS 18.2",
+    "platform": "ios",
+    "deviceModel": "iPhone 15",
+    "logs": "panic: nil map\n...",
+    "logsDurationMin": 5
+  }'</code></pre>
+
+      <p>
+        <code>type</code> is <code>bug</code> or <code>feature</code>. <code>title</code> and
+        <code>body</code> are required; everything else is diagnostic metadata and may be empty. The
+        response is <code>201</code> with the created ticket, including the ID to show the reporter.
+      </p>
+
+      <h3>Read and reply</h3>
+      <pre><code>curl https://flagit.example.com/api/tickets/FLG-7X3K9Q \
+  -H 'X-Device-Token: 6f1c2f4e-6c2a-4c1e-9b6c-1f0a2d3e4b5c'
+
+curl -X POST https://flagit.example.com/api/tickets/FLG-7X3K9Q/messages \
+  -H 'Content-Type: application/json' \
+  -H 'X-Device-Token: 6f1c2f4e-6c2a-4c1e-9b6c-1f0a2d3e4b5c' \
+  -d '{"body": "It also happens on the edit screen."}'</code></pre>
+
+      <p>
+        A ticket belonging to a different device returns <code>403</code>, never <code>404</code> —
+        the distinction is deliberate and tells an honest caller what went wrong.
+      </p>
+
+      <h2 id="internal">Internal API — port 3000</h2>
+      <p>
+        Every route below <code>/internal</code> requires the admin key. Only
+        <code>/healthz</code> is open, so a container healthcheck needs no credential. The dashboard
+        SPA itself is served from <code>/internal/admin</code> and authenticates in the browser.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Endpoint</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/internal/poll</code></td>
+              <td>
+                Tickets created or updated after <code>?since=</code>, one page at a time. Returns
+                <code>now</code> to pass back as the next <code>since</code>, plus
+                <code>hasMore</code>. An absent <code>since</code> starts from the beginning, so a
+                fresh poller can bootstrap.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/internal/tickets</code></td>
+              <td>
+                List tickets. Filters: <code>app</code>, <code>status</code>, <code>type</code>.
+                Paging: <code>limit</code>, <code>offset</code>. Returns
+                <code>total</code> alongside the page.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/internal/tickets/{id}</code></td>
+              <td>One ticket with its conversation, its commits and its raw diagnostics.</td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-patch">PATCH</span> <code>/internal/tickets/{id}</code></td>
+              <td>
+                Change status, set <code>shippedVersion</code>, add a <code>comment</code>, or all
+                three. Status and comment are written in one transaction. Send
+                <code>"force": true</code> to skip workflow validation.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-post">POST</span> <code>/internal/tickets/batch</code>
+              </td>
+              <td>
+                Apply one status to many tickets — the release sweep. Returns
+                <code>updated</code> and a <code>failed</code> map of ID to reason code
+                (<code>not_found</code>, <code>invalid_transition</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-get">GET</span> <code>/internal/tickets/{id}/messages</code>
+              </td>
+              <td>The conversation, without an ownership check.</td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-post">POST</span> <code>/internal/tickets/{id}/messages</code>
+              </td>
+              <td>Post a reply as the agent. Visible to the reporter immediately.</td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-get">GET</span> <code>/internal/tickets/{id}/commits</code>
+              </td>
+              <td>Commits recorded against the ticket. Never exposed publicly.</td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-post">POST</span> <code>/internal/tickets/{id}/commits</code>
+              </td>
+              <td>
+                Record a commit: <code>commitHash</code>, <code>branch</code>, <code>message</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/internal/apps</code></td>
+              <td>Every app Flagit has seen, with its auto-process setting.</td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-patch">PATCH</span> <code>/internal/apps/{name}</code></td>
+              <td>Set <code>autoProcessEnabled</code> for one app.</td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-get">GET</span> <code>/internal/settings</code></td>
+              <td>
+                Global configuration: <code>globalAutoProcess</code>,
+                <code>hermesWebhookUrl</code>.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="verb verb-patch">PATCH</span> <code>/internal/settings</code></td>
+              <td>Patch the global configuration. Omitted fields are left unchanged.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Polling</h3>
+      <pre><code>curl "http://127.0.0.1:3000/internal/poll?since=2026-07-27T09:00:00Z&amp;limit=50" \
+  -H 'X-Admin-Key: '"$FLAGIT_ADMIN_KEY"
+
+{
+  "data": {
+    "tickets": [ … ],
+    "since": "2026-07-27T09:00:00Z",
+    "now":   "2026-07-27T09:05:12Z",
+    "count": 3,
+    "limit": 50,
+    "hasMore": false
+  }
+}</code></pre>
+
+      <p>
+        <code>now</code> is captured before the query runs, so a ticket written mid-query is picked
+        up by the next poll rather than skipped. When <code>hasMore</code> is true, come straight
+        back instead of waiting for the next tick.
+      </p>
+
+      <h3>Moving a ticket</h3>
+      <pre><code>curl -X PATCH http://127.0.0.1:3000/internal/tickets/FLG-7X3K9Q \
+  -H 'Content-Type: application/json' \
+  -H 'X-Admin-Key: '"$FLAGIT_ADMIN_KEY" \
+  -d '{"status": "resolved", "comment": "Fixed the nil map on save."}'
+
+# The release sweep: many tickets, one version.
+curl -X POST http://127.0.0.1:3000/internal/tickets/batch \
+  -H 'Content-Type: application/json' \
+  -H 'X-Admin-Key: '"$FLAGIT_ADMIN_KEY" \
+  -d '{
+    "ticketIds": ["FLG-7X3K9Q", "FLG-2M8QT4"],
+    "status": "shipped",
+    "shippedVersion": "1.5.0",
+    "force": true
+  }'</code></pre>
+
+      <h2 id="webhook">Hermes webhook</h2>
+      <p>
+        When a ticket is created and automatic processing applies, Flagit POSTs this body to the
+        configured webhook URL. Delivery is attempted up to three times with exponential backoff
+        (1s, 2s). A 5xx or a transport failure is retried; a 4xx is treated as final, because
+        resending an identical body cannot change the answer. 408 and 429 are the exceptions — both
+        invite the caller back.
+      </p>
+
+      <pre><code>POST &lt;hermesWebhookUrl&gt;
+Content-Type: application/json
+User-Agent: flagit-webhook/1
+
+{
+  "event": "ticket.created",
+  "ticketId": "FLG-7X3K9Q",
+  "type": "bug",
+  "title": "The app closes when I tap save",
+  "body": "Tapped save on a new note, the app closed straight away.",
+  "status": "open",
+  "appName": "notes",
+  "appVersion": "1.4.2",
+  "os": "iOS 18.2",
+  "platform": "ios",
+  "deviceModel": "iPhone 15",
+  "logs": "panic: nil map\n...",
+  "logsDurationMin": 5,
+  "createdAt": "2026-07-27T09:04:58Z",
+  "ticketUrl": "https://flagit.example.com/api/tickets/FLG-7X3K9Q"
+}</code></pre>
+
+      <p>
+        <code>ticketUrl</code> appears only when <code>FLAGIT_PUBLIC_URL</code> is set. A missed
+        delivery is never a lost ticket: <code>/internal/poll</code> covers the gap.
+      </p>
+
+      <h2 id="models">Models</h2>
+
+      <h3>Ticket</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>id</code></td>
+              <td>string</td>
+              <td><code>FLG-</code> plus 6 base62 characters, e.g. <code>FLG-7X3K9Q</code>.</td>
+            </tr>
+            <tr>
+              <td><code>type</code></td>
+              <td>string</td>
+              <td><code>bug</code> · <code>feature</code></td>
+            </tr>
+            <tr>
+              <td><code>title</code>, <code>body</code></td>
+              <td>string</td>
+              <td>What the reporter wrote.</td>
+            </tr>
+            <tr>
+              <td><code>status</code></td>
+              <td>string</td>
+              <td>
+                <code>open</code> · <code>in-progress</code> · <code>resolved</code> ·
+                <code>shipped</code> · <code>closed</code>
+              </td>
+            </tr>
+            <tr>
+              <td><code>appName</code>, <code>appVersion</code>, <code>os</code>,
+                <code>platform</code>, <code>deviceModel</code></td>
+              <td>string</td>
+              <td>Diagnostics from the host app. May be empty.</td>
+            </tr>
+            <tr>
+              <td><code>logs</code>, <code>logsDurationMin</code></td>
+              <td>string, int</td>
+              <td>
+                Ring-buffer logs and how many minutes they cover. Omitted from public responses.
+              </td>
+            </tr>
+            <tr>
+              <td><code>shippedVersion</code></td>
+              <td>string</td>
+              <td>Set when a ticket moves to <code>shipped</code>. Shown to the reporter.</td>
+            </tr>
+            <tr>
+              <td><code>createdAt</code>, <code>updatedAt</code></td>
+              <td>string</td>
+              <td>RFC 3339, UTC.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The device token hash is never serialised. <code>Message</code> carries
+        <code>id</code>, <code>ticketId</code>, <code>body</code>, <code>role</code>
+        (<code>user</code> or <code>agent</code>) and <code>createdAt</code>.
+        <code>CommitInfo</code> carries <code>commitHash</code>, <code>branch</code>,
+        <code>message</code> and <code>createdAt</code>.
+      </p>
+
+      <h3>Status transitions</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>From</th>
+              <th>May move to</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>open</code></td>
+              <td><code>in-progress</code>, <code>resolved</code>, <code>closed</code></td>
+            </tr>
+            <tr>
+              <td><code>in-progress</code></td>
+              <td><code>open</code>, <code>resolved</code>, <code>closed</code></td>
+            </tr>
+            <tr>
+              <td><code>resolved</code></td>
+              <td><code>in-progress</code>, <code>shipped</code>, <code>closed</code></td>
+            </tr>
+            <tr>
+              <td><code>shipped</code></td>
+              <td><code>resolved</code>, <code>closed</code></td>
+            </tr>
+            <tr>
+              <td><code>closed</code></td>
+              <td><code>open</code>, <code>in-progress</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Re-saving a ticket in the status it already holds is always allowed. Anything else needs
+        <code>"force": true</code>.
+      </p>
+
+      <h2 id="errors">Errors</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>400</code></td>
+              <td>
+                Malformed JSON, an unknown field, a missing required field, an invalid status or
+                type, or a bad query parameter.
+              </td>
+            </tr>
+            <tr>
+              <td><code>401</code></td>
+              <td>Missing device token, or an invalid/absent admin key.</td>
+            </tr>
+            <tr>
+              <td><code>403</code></td>
+              <td>The ticket exists but belongs to another device.</td>
+            </tr>
+            <tr>
+              <td><code>404</code></td>
+              <td>No such ticket, app, or endpoint. Always JSON, never HTML.</td>
+            </tr>
+            <tr>
+              <td><code>405</code></td>
+              <td>Wrong method for a known path.</td>
+            </tr>
+            <tr>
+              <td><code>429</code></td>
+              <td>Ticket creation rate limit exceeded — 10 per minute per client.</td>
+            </tr>
+            <tr>
+              <td><code>500</code></td>
+              <td>Unhandled server error. The message is generic; details go to the log only.</td>
+            </tr>
+            <tr>
+              <td><code>503</code></td>
+              <td>The admin key is not configured, so the internal API fails closed.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>Flagit — MIT licensed. Built with Go, SQLite and Svelte.</span>
+        <span><a href="https://github.com/radaiko/flagit">github.com/radaiko/flagit</a></span>
+      </div>
+    </footer>
+  </body>
+</html>

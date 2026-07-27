@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flagit — self-hosted in-app ticket system</title>
+    <meta
+      name="description"
+      content="Flagit is a self-hosted in-app ticket system: users flag issues from inside the app, Hermes dispatches Claude Code to fix them. Go, SQLite, Svelte, one binary."
+    />
+    <meta name="theme-color" content="#14161a" />
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23ff6a33' d='M3 1h10v14H3l3-7z'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand mono" href="index.html">Flagit</a>
+        <nav class="site-nav">
+          <a href="index.html" aria-current="page">Overview</a>
+          <a href="api.html">API</a>
+          <a href="deployment.html">Deployment</a>
+          <a href="https://github.com/radaiko/flagit">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap stack">
+          <span class="eyebrow">Self-hosted · Go + SQLite + Svelte · MIT</span>
+          <h1>Flag a problem without leaving the app.</h1>
+          <p class="lede">
+            Flagit is an in-app ticket system you run yourself. People report bugs and feature
+            requests from inside your app, get an ID back, and follow the ticket with it. New
+            tickets go to <strong>Hermes</strong>, which dispatches Claude Code to investigate and
+            fix them. No accounts, no email addresses, no contact details — just a ticket ID.
+          </p>
+          <div class="hero-actions">
+            <a class="btn" href="deployment.html">Deploy it</a>
+            <a class="btn btn-secondary" href="api.html">Read the API</a>
+            <a class="btn btn-secondary" href="https://github.com/radaiko/flagit">Source</a>
+          </div>
+          <div class="hero-actions">
+            <span class="tag" style="--tag-color: var(--status-open)"><span>FLG-7X3K9Q</span></span>
+            <span class="tag" style="--tag-color: var(--status-in-progress)"
+              ><span>FLG-2M8QT4</span></span
+            >
+            <span class="tag" style="--tag-color: var(--status-shipped)"
+              ><span>FLG-9K1WD7</span></span
+            >
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="features">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">What it does</span>
+            <h2>Everything a small team needs, and nothing it does not.</h2>
+            <p>
+              One binary with the frontend embedded, one SQLite file, two ports. The public port
+              serves apps; the internal port serves you and Hermes.
+            </p>
+          </div>
+
+          <div class="grid">
+            <article class="card">
+              <h3>Ticket creation</h3>
+              <p>
+                Bug reports and feature requests filed from a web overlay you drop into any app or
+                webview. Each one gets an ID like <code>FLG-7X3K9Q</code>.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Device ownership token</h3>
+              <p>
+                A random token in the reporter's browser stands in for a login. Only its SHA-256
+                hash reaches the server, and only the device that filed a ticket can open it.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Anonymous diagnostics</h3>
+              <p>
+                App version, operating system, platform and a ring buffer of recent logs — attached
+                by default, switched off with one checkbox, never containing contact details.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Two-way messaging</h3>
+              <p>
+                Reporter and agent converse on the ticket. Replies are pulled with the ticket ID, so
+                Flagit never needs a way to reach anyone.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Hermes integration</h3>
+              <p>
+                New tickets are POSTed to a webhook with exponential backoff and up to three
+                attempts. Hermes can also poll <code>/internal/poll?since=</code> and miss nothing.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Admin dashboard</h3>
+              <p>
+                Filter, open, reply, change status. Per-app and global auto-processing switches, and
+                a mass update for the release sweep.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Commit tracking</h3>
+              <p>
+                Agents record hash, branch and message against the ticket. Developer-facing only —
+                the public API never returns commits.
+              </p>
+            </article>
+            <article class="card">
+              <h3>German and English</h3>
+              <p>
+                Both interfaces auto-detect the locale and carry a manual toggle. Both languages are
+                written, not machine-translated.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="architecture">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Architecture</span>
+            <h2>Two ports, one binary, one file.</h2>
+            <p>
+              The public API and the web overlay sit on <code>:8080</code> and are the only thing
+              your apps reach. The internal API, the admin dashboard and everything Hermes touches
+              sit on <code>:3000</code> — keep that port on a private network.
+            </p>
+          </div>
+
+          <div class="diagram">
+            <svg viewBox="0 0 900 430" role="img" aria-labelledby="arch-title arch-desc">
+              <title id="arch-title">Flagit architecture</title>
+              <desc id="arch-desc">
+                Apps and their embedded overlay call the public API on port 8080. The Go server
+                holds the API, service and webhook layers over a SQLite file. On port 3000 the
+                internal API serves the admin dashboard and Hermes, which dispatches Claude Code and
+                writes status updates, replies and commits back.
+              </desc>
+
+              <!-- Clients -->
+              <rect class="node" x="16" y="70" width="190" height="110" rx="8" />
+              <text class="node-title" x="36" y="100">YOUR APP</text>
+              <text x="36" y="124">Flagit web overlay</text>
+              <text x="36" y="144">iOS · Android · web</text>
+              <text x="36" y="164">device token in browser</text>
+
+              <rect class="node" x="16" y="250" width="190" height="90" rx="8" />
+              <text class="node-title" x="36" y="280">ADMIN</text>
+              <text x="36" y="304">Dashboard SPA</text>
+              <text x="36" y="324">X-Admin-Key header</text>
+
+              <!-- Server -->
+              <rect class="group" x="286" y="30" width="330" height="370" rx="10" />
+              <text class="node-title" x="306" y="58">FLAGIT · ONE GO BINARY</text>
+
+              <rect class="node node-accent" x="306" y="76" width="290" height="66" rx="6" />
+              <text class="node-title" x="326" y="102">PUBLIC API :8080</text>
+              <text x="326" y="124">/api/tickets · overlay assets</text>
+
+              <rect class="node" x="306" y="158" width="290" height="66" rx="6" />
+              <text class="node-title" x="326" y="184">INTERNAL API :3000</text>
+              <text x="326" y="206">/internal/* · /internal/admin</text>
+
+              <rect class="node" x="306" y="240" width="290" height="62" rx="6" />
+              <text class="node-title" x="326" y="266">SERVICE + WEBHOOK</text>
+              <text x="326" y="288">workflow rules · retries</text>
+
+              <rect class="node" x="306" y="318" width="290" height="62" rx="6" />
+              <text class="node-title" x="326" y="344">SQLITE</text>
+              <text x="326" y="366">/data/flagit.db · no CGO</text>
+
+              <!-- Hermes -->
+              <rect class="node" x="696" y="130" width="190" height="120" rx="8" />
+              <text class="node-title" x="716" y="160">HERMES</text>
+              <text x="716" y="184">dispatches</text>
+              <text x="716" y="204">Claude Code</text>
+              <text x="716" y="228">webhook + poll</text>
+
+              <!-- Edges -->
+              <defs>
+                <marker
+                  id="arrow"
+                  viewBox="0 0 10 10"
+                  refX="9"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+                </marker>
+              </defs>
+
+              <g color="#888d97">
+                <path class="edge" d="M206 110 H 306" marker-end="url(#arrow)" />
+                <path class="edge" d="M206 295 H 250 V 191 H 306" marker-end="url(#arrow)" />
+                <path class="edge" d="M596 191 H 660 V 175 H 696" marker-end="url(#arrow)" />
+              </g>
+              <g color="#ff6a33">
+                <path class="edge edge-accent" d="M596 273 H 656 V 215 H 696" marker-end="url(#arrow)" />
+              </g>
+
+              <text class="edge-label" x="216" y="100">POST /api/tickets</text>
+              <text class="edge-label" x="216" y="285">GET /internal/tickets</text>
+              <text class="edge-label" x="604" y="166">poll · patch · commits</text>
+              <text class="edge-label" x="604" y="262">ticket.created webhook</text>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="lifecycle">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Workflow</span>
+            <h2>Five statuses, one documented path.</h2>
+            <p>
+              <code>open → in-progress → resolved → shipped → closed</code>. A ticket may also jump
+              straight to <code>closed</code> from any stage, or step back one stage when work
+              reopens or a release is rolled back. Anything else is rejected unless the caller sends
+              <code>"force": true</code>.
+            </p>
+          </div>
+
+          <ol class="lifecycle">
+            <li style="--step-color: var(--status-open)">
+              <span class="name">open</span>
+              <p>Filed, waiting to be picked up.</p>
+            </li>
+            <li style="--step-color: var(--status-in-progress)">
+              <span class="name">in-progress</span>
+              <p>Someone — or an agent — is working on it.</p>
+            </li>
+            <li style="--step-color: var(--status-resolved)">
+              <span class="name">resolved</span>
+              <p>Fixed in the code, not yet in a release.</p>
+            </li>
+            <li style="--step-color: var(--status-shipped)">
+              <span class="name">shipped</span>
+              <p>Out in the world, with the version recorded.</p>
+            </li>
+            <li style="--step-color: var(--status-closed)">
+              <span class="name">closed</span>
+              <p>No further work planned.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="band" id="screenshots">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Screens</span>
+            <h2>The overlay people see, the dashboard you use.</h2>
+            <p>
+              The overlay is sized for a webview panel; the dashboard expects a desktop. Both ship
+              inside the same binary and share one design language.
+            </p>
+          </div>
+
+          <div class="shots">
+            <figure class="shot">
+              <span class="frame">
+                <img
+                  src="screenshots/overlay-create.png"
+                  alt="The Flagit overlay: a report form with a bug or feature choice, a summary field, a description field, and a diagnostics checkbox."
+                  loading="lazy"
+                />
+              </span>
+              <figcaption>
+                <strong>Overlay · file a report</strong>
+                Bug or feature, one line of summary, the detail. Diagnostics attached by default.
+              </figcaption>
+            </figure>
+
+            <figure class="shot">
+              <span class="frame">
+                <img
+                  src="screenshots/overlay-view.png"
+                  alt="The Flagit overlay showing an open ticket with its ID, status, dates, description and conversation."
+                  loading="lazy"
+                />
+              </span>
+              <figcaption>
+                <strong>Overlay · follow a ticket</strong>
+                The ID is the whole credential. Status, dates, conversation and a reply box.
+              </figcaption>
+            </figure>
+
+            <figure class="shot">
+              <span class="frame">
+                <img
+                  src="screenshots/dashboard-tickets.png"
+                  alt="The Flagit admin dashboard listing tickets with app, status and type filters."
+                  loading="lazy"
+                />
+              </span>
+              <figcaption>
+                <strong>Dashboard · tickets</strong>
+                Filter by app, status and type. Select rows to run a mass update.
+              </figcaption>
+            </figure>
+
+            <figure class="shot">
+              <span class="frame">
+                <img
+                  src="screenshots/dashboard-detail.png"
+                  alt="A single ticket in the Flagit admin dashboard, showing diagnostics, logs, the conversation and status controls."
+                  loading="lazy"
+                />
+              </span>
+              <figcaption>
+                <strong>Dashboard · ticket detail</strong>
+                Diagnostics, logs, commits, the conversation, and the status control.
+              </figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="quickstart">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">Quick start</span>
+            <h2>Up in one command.</h2>
+            <p>
+              Docker Compose builds the frontend, compiles the binary and starts both ports. The
+              admin key is generated on first start and printed once.
+            </p>
+          </div>
+
+          <pre><code>git clone https://github.com/radaiko/flagit
+cd flagit
+docker compose up -d
+
+# The admin key is printed exactly once, on first start:
+docker compose logs flagit | grep -A2 "generated one"</code></pre>
+
+          <p>
+            Then open <code>http://127.0.0.1:3000/internal/admin</code> and sign in with that key.
+            The overlay is served from <code>http://127.0.0.1:8080/</code>. Full instructions,
+            including Coolify and Tailscale, are in the
+            <a href="deployment.html">deployment guide</a>.
+          </p>
+
+          <div class="note">
+            <strong>Building without Docker?</strong> <code>make web</code> builds the Svelte
+            frontend and stages it for embedding, <code>make build</code> produces
+            <code>bin/flagit</code>, and <code>make dev</code> runs the server against a Vite dev
+            server for frontend work.
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="help">
+        <div class="wrap">
+          <div class="section-head">
+            <span class="eyebrow">In the product</span>
+            <h2>The docs are also in the app.</h2>
+            <p>
+              The overlay carries a <strong>?</strong> in its header explaining how to file a
+              report, what the ticket ID is for, how replies work and what the device token is. The
+              dashboard has a <strong>Help</strong> tab covering the status workflow, per-app
+              settings, mass operations, Hermes and commit tracking. Both are available in German
+              and English.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>Flagit — MIT licensed. Built with Go, SQLite and Svelte.</span>
+        <span><a href="https://github.com/radaiko/flagit">github.com/radaiko/flagit</a></span>
+      </div>
+    </footer>
+  </body>
+</html>

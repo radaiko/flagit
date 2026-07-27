@@ -1,0 +1,689 @@
+/*
+ * Flagit documentation site.
+ *
+ * Same design language as the product: the palette comes from utility-marking
+ * tape — the colours surveyors spray on the ground before anyone digs — and
+ * every identifier is set like a stencilled equipment tag. Dark only, because
+ * this is a developer-facing site and it should look like the terminal it will
+ * be read next to.
+ *
+ * No build step, no framework, no webfont: one stylesheet, served straight from
+ * /docs by GitHub Pages.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --ink: #f2efe9;
+  --ink-2: #b6bac2;
+  --ink-3: #888d97;
+  --paper: #14161a;
+  --paper-2: #1d2026;
+  --paper-3: #23272e;
+  --line: #2c3037;
+  --marker: #ff6a33;
+  --marker-ink: #14161a;
+
+  --status-open: #ff6a33;
+  --status-in-progress: #f2b705;
+  --status-resolved: #5aa0f5;
+  --status-shipped: #2bb87c;
+  --status-closed: #888d97;
+
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.125rem;
+  --step-2: 1.5rem;
+  --step-3: 2.25rem;
+  --step-4: 3.25rem;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 5rem;
+
+  --radius: 3px;
+  --radius-lg: 8px;
+
+  --wrap: 64rem;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--step-0);
+  line-height: 1.6;
+  color: var(--ink-2);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+h1 {
+  font-size: var(--step-3);
+}
+h2 {
+  font-size: var(--step-2);
+}
+h3 {
+  font-size: var(--step-1);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--marker);
+  text-decoration-color: color-mix(in srgb, var(--marker) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Every identifier, status and unit of metadata is set like a stencilled
+   equipment tag. This is the one type gesture the whole product shares. */
+.mono,
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  display: block;
+  color: var(--ink-3);
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0 var(--space-5);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- chrome -- */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.site-header .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  padding-block: var(--space-4);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-decoration: none;
+}
+
+.brand::before {
+  content: '';
+  width: 0.5rem;
+  height: 1rem;
+  background: var(--marker);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0.25rem 50%);
+}
+
+.site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-left: auto;
+}
+
+.site-nav a {
+  color: var(--ink-3);
+  text-decoration: none;
+  padding-bottom: var(--space-1);
+  border-bottom: 2px solid transparent;
+}
+
+.site-nav a:hover {
+  color: var(--ink);
+}
+
+.site-nav a[aria-current='page'] {
+  color: var(--ink);
+  border-bottom-color: var(--marker);
+}
+
+/* ------------------------------------------------------------------ hero -- */
+
+.hero {
+  padding: var(--space-8) 0 var(--space-7);
+  border-bottom: 1px solid var(--line);
+  /* A survey grid, faint enough to read as texture rather than decoration. */
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line) 55%, transparent) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+  background-position: center;
+}
+
+.hero h1 {
+  font-size: var(--step-4);
+  max-width: 18ch;
+}
+
+.hero .lede {
+  max-width: 60ch;
+  font-size: var(--step-1);
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  font-weight: 600;
+  color: var(--marker-ink);
+  background: var(--marker);
+  border: 1px solid var(--marker);
+  border-radius: var(--radius);
+  text-decoration: none;
+}
+
+.btn:hover {
+  background: color-mix(in srgb, var(--marker) 85%, white);
+}
+
+.btn-secondary {
+  color: var(--ink);
+  background: transparent;
+  border-color: var(--line);
+}
+
+.btn-secondary:hover {
+  background: var(--paper-2);
+  border-color: var(--ink-3);
+}
+
+/* --------------------------------------------------------------- section -- */
+
+section.band {
+  padding: var(--space-8) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+section.band > .wrap > * + * {
+  margin-top: var(--space-5);
+}
+
+.section-head {
+  max-width: 62ch;
+}
+
+.section-head h2 {
+  margin-top: var(--space-2);
+}
+
+.section-head p {
+  margin-top: var(--space-3);
+}
+
+/* ------------------------------------------------------------------ grid -- */
+
+.grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+
+.card {
+  padding: var(--space-5);
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.card h3 {
+  margin-bottom: var(--space-2);
+}
+
+.card p {
+  font-size: var(--step--1);
+}
+
+/* The flag tag: a notched plate carrying a stencilled serial, with a colour bar
+   that *is* the status. Lifted straight from the product. */
+.tag {
+  display: inline-flex;
+  align-items: stretch;
+  font-size: var(--step--1);
+  background: var(--paper-3);
+  border: 1px solid var(--line);
+  clip-path: polygon(0.55em 0, 100% 0, 100% 100%, 0.55em 100%, 0 50%);
+  padding-left: 0.55em;
+}
+
+.tag::before {
+  content: '';
+  width: 0.4em;
+  background: var(--tag-color, var(--status-open));
+}
+
+.tag span {
+  padding: 0.25em 0.75em 0.25em 0.6em;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------- screenshots -- */
+
+.shots {
+  display: grid;
+  gap: var(--space-5);
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+
+figure.shot {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The frame is the placeholder: an empty or missing screenshot still leaves a
+   labelled, correctly proportioned slot rather than a broken-image icon. */
+.shot .frame {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      var(--paper-2) 0 12px,
+      var(--paper-3) 12px 24px
+    );
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.shot .frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+}
+
+.shot figcaption {
+  font-size: var(--step--1);
+  color: var(--ink-3);
+}
+
+.shot figcaption strong {
+  display: block;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------- architecture -- */
+
+.diagram {
+  padding: var(--space-5);
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+}
+
+.diagram svg {
+  display: block;
+  width: 100%;
+  min-width: 40rem;
+  height: auto;
+}
+
+.diagram text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  fill: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+
+.diagram .node-title {
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--ink);
+  letter-spacing: 0.12em;
+}
+
+.diagram .edge-label {
+  font-size: 11px;
+  fill: var(--ink-3);
+}
+
+.diagram .node {
+  fill: var(--paper-3);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.diagram .node-accent {
+  stroke: var(--marker);
+}
+
+.diagram .group {
+  fill: none;
+  stroke: var(--line);
+  stroke-dasharray: 5 5;
+}
+
+.diagram .edge {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.5;
+}
+
+.diagram .edge-accent {
+  stroke: var(--marker);
+}
+
+/* ------------------------------------------------------------- lifecycle -- */
+
+.lifecycle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lifecycle li {
+  flex: 1 1 9rem;
+  padding: var(--space-4);
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--step-color, var(--status-open));
+  border-radius: var(--radius);
+}
+
+.lifecycle .name {
+  display: block;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lifecycle p {
+  margin-top: var(--space-2);
+  font-size: var(--step--1);
+}
+
+/* ------------------------------------------------------------------ code -- */
+
+pre {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  overflow-x: auto;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--marker);
+  border-radius: var(--radius);
+}
+
+pre,
+code {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+}
+
+code {
+  color: var(--ink);
+}
+
+:not(pre) > code {
+  padding: 0.1em 0.4em;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+pre code {
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+/* ----------------------------------------------------------------- lists -- */
+
+.prose ul,
+.prose ol {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.prose li + li {
+  margin-top: var(--space-2);
+}
+
+.prose > * + * {
+  margin-top: var(--space-4);
+}
+
+.prose h2 {
+  margin-top: var(--space-7);
+}
+
+.prose h3 {
+  margin-top: var(--space-6);
+}
+
+/* ---------------------------------------------------------------- tables -- */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+
+th,
+td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+thead th {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--paper-2);
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+td code {
+  white-space: nowrap;
+}
+
+/* HTTP verbs, colour-keyed the way the statuses are. */
+.verb {
+  display: inline-block;
+  min-width: 4.5em;
+  padding: 0.1em 0.5em;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  color: var(--marker-ink);
+  background: var(--ink-3);
+  border-radius: var(--radius);
+}
+
+.verb-get {
+  background: var(--status-resolved);
+}
+.verb-post {
+  background: var(--status-shipped);
+}
+.verb-patch {
+  background: var(--status-in-progress);
+}
+
+/* ----------------------------------------------------------------- notes -- */
+
+.note {
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--step--1);
+  background: var(--paper-2);
+  border-left: 3px solid var(--status-in-progress);
+  border-radius: var(--radius);
+}
+
+.note strong {
+  color: var(--ink);
+}
+
+.note-danger {
+  border-left-color: var(--status-open);
+}
+
+/* ------------------------------------------------------------------- toc -- */
+
+.toc {
+  padding: var(--space-4) var(--space-5);
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.toc ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--step--1);
+}
+
+/* ---------------------------------------------------------------- footer -- */
+
+.site-footer {
+  padding: var(--space-7) 0;
+  font-size: var(--step--1);
+  color: var(--ink-3);
+}
+
+.site-footer .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  justify-content: space-between;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

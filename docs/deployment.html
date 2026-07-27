@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deployment — Flagit</title>
+    <meta
+      name="description"
+      content="Deploy Flagit with Docker Compose, Coolify or a bare binary, and reach the admin dashboard safely over Tailscale."
+    />
+    <meta name="theme-color" content="#14161a" />
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23ff6a33' d='M3 1h10v14H3l3-7z'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand mono" href="index.html">Flagit</a>
+        <nav class="site-nav">
+          <a href="index.html">Overview</a>
+          <a href="api.html">API</a>
+          <a href="deployment.html" aria-current="page">Deployment</a>
+          <a href="https://github.com/radaiko/flagit">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap prose" style="padding-block: var(--space-7) var(--space-8)">
+      <span class="eyebrow">Guide</span>
+      <h1>Deployment</h1>
+      <p class="lede">
+        Flagit is one static binary with the frontend embedded and one SQLite file. Whatever you run
+        it on, the shape is the same: expose <code>:8080</code> to your apps, keep
+        <code>:3000</code> private, and persist <code>/data</code>.
+      </p>
+
+      <nav class="toc" aria-label="On this page">
+        <span class="eyebrow">On this page</span>
+        <ul>
+          <li><a href="#topology">Topology</a></li>
+          <li><a href="#config">Configuration</a></li>
+          <li><a href="#compose">Docker Compose</a></li>
+          <li><a href="#coolify">Coolify</a></li>
+          <li><a href="#tailscale">Tailscale</a></li>
+          <li><a href="#binary">Bare binary</a></li>
+          <li><a href="#operate">Operating</a></li>
+        </ul>
+      </nav>
+
+      <h2 id="topology">Topology</h2>
+      <p>Two ports, two very different audiences.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Port</th>
+              <th>Serves</th>
+              <th>Exposure</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>8080</code></td>
+              <td>Public API (<code>/api/*</code>), the web overlay, <code>/healthz</code></td>
+              <td>
+                Reachable by your apps. Behind TLS — a reverse proxy, or Tailscale Funnel if you do
+                not want a public hostname of your own.
+              </td>
+            </tr>
+            <tr>
+              <td><code>3000</code></td>
+              <td>
+                Internal API (<code>/internal/*</code>), admin dashboard
+                (<code>/internal/admin</code>), <code>/healthz</code>
+              </td>
+              <td>
+                Private. A tailnet address, or loopback plus an SSH tunnel. Never the open internet.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note note-danger">
+        <strong>The admin key is the whole perimeter for port 3000.</strong> It grants read and
+        write access to every ticket, every diagnostic log and every setting. Treat the port as
+        privileged infrastructure even though the key is required.
+      </div>
+
+      <h2 id="config">Configuration</h2>
+      <p>
+        Every setting is a flag with an environment-variable fallback. Flags win, so a container can
+        always be overridden on the command line.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Flag</th>
+              <th>Environment</th>
+              <th>Default</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>--port</code></td>
+              <td><code>FLAGIT_PORT</code></td>
+              <td><code>8080</code></td>
+              <td>Public API and web overlay.</td>
+            </tr>
+            <tr>
+              <td><code>--admin-port</code></td>
+              <td><code>FLAGIT_ADMIN_PORT</code></td>
+              <td><code>3000</code></td>
+              <td>Internal API and admin dashboard.</td>
+            </tr>
+            <tr>
+              <td><code>--db-path</code></td>
+              <td><code>FLAGIT_DB_PATH</code></td>
+              <td><code>./data/flagit.db</code></td>
+              <td>SQLite file. Put it on a volume.</td>
+            </tr>
+            <tr>
+              <td><code>--admin-key</code></td>
+              <td><code>FLAGIT_ADMIN_KEY</code></td>
+              <td>generated</td>
+              <td>
+                Admin credential. Left unset, one is generated and printed once on first start; only
+                its hash is stored.
+              </td>
+            </tr>
+            <tr>
+              <td><code>--public-url</code></td>
+              <td><code>FLAGIT_PUBLIC_URL</code></td>
+              <td>empty</td>
+              <td>Externally reachable base URL, used to build the link in webhook payloads.</td>
+            </tr>
+            <tr>
+              <td><code>--log-level</code></td>
+              <td><code>FLAGIT_LOG_LEVEL</code></td>
+              <td><code>info</code></td>
+              <td><code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>.</td>
+            </tr>
+            <tr>
+              <td><code>--dev</code></td>
+              <td><code>FLAGIT_DEV</code></td>
+              <td><code>false</code></td>
+              <td>Proxy the frontend to a Vite dev server instead of serving embedded files.</td>
+            </tr>
+            <tr>
+              <td><code>--vite-url</code></td>
+              <td><code>FLAGIT_VITE_URL</code></td>
+              <td><code>http://localhost:5173</code></td>
+              <td>Where that dev server lives.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The Hermes webhook URL and the auto-processing switches are <em>not</em> environment
+        variables — they live in the database and are edited under Settings in the dashboard, so
+        they can be changed without a redeploy.
+      </p>
+
+      <h2 id="compose">Docker Compose</h2>
+      <p>
+        The repository ships a <code>docker-compose.yml</code> that builds the image from source: a
+        Node stage builds the Svelte bundles, a Go stage embeds them and compiles a static binary,
+        and the runtime stage is Alpine with a non-root user.
+      </p>
+
+      <pre><code>git clone https://github.com/radaiko/flagit
+cd flagit
+docker compose up -d
+
+# Read the generated admin key — printed exactly once.
+docker compose logs flagit</code></pre>
+
+      <p>The important parts of the compose file:</p>
+
+      <pre><code>services:
+  flagit:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"                 # public: apps talk to this
+      - "127.0.0.1:3000:3000"       # internal: loopback only by default
+    volumes:
+      - flagit_data:/data
+    environment:
+      FLAGIT_PUBLIC_URL: ${FLAGIT_PUBLIC_URL:-}
+      FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY:-}
+
+volumes:
+  flagit_data:</code></pre>
+
+      <p>
+        To expose the admin port to your tailnet instead of loopback, bind it to the host's Tailscale
+        address: <code>"100.x.y.z:3000:3000"</code>.
+      </p>
+
+      <div class="note">
+        <strong>Setting the key yourself.</strong> Put <code>FLAGIT_ADMIN_KEY</code> in a
+        <code>.env</code> next to the compose file (or in your platform's secret store) and the
+        generated-key step is skipped entirely. A key supplied this way is hashed and persisted, so
+        a later restart without the variable still accepts it.
+      </div>
+
+      <h2 id="coolify">Coolify on a Hetzner VM</h2>
+      <p>
+        Coolify runs the same compose file; the work is in telling it which port is public and where
+        the data lives.
+      </p>
+
+      <ol>
+        <li>
+          <strong>New resource → Docker Compose</strong>, pointed at the repository and branch. The
+          <code>Dockerfile</code> at the root is the build.
+        </li>
+        <li>
+          <strong>Environment variables:</strong> set <code>FLAGIT_PUBLIC_URL</code> to the public
+          hostname you will assign (for example <code>https://flagit.example.com</code>). Add
+          <code>FLAGIT_ADMIN_KEY</code> as a secret if you want to choose the key rather than read
+          it from the logs.
+        </li>
+        <li>
+          <strong>Domains:</strong> map your hostname to container port <code>8080</code> only.
+          Coolify's proxy terminates TLS and issues the certificate. Leave <code>3000</code>
+          unmapped — no domain, no proxy rule.
+        </li>
+        <li>
+          <strong>Persistent storage:</strong> a named volume mounted at <code>/data</code>. Without
+          it, every redeploy starts from an empty database.
+        </li>
+        <li>
+          <strong>Healthcheck:</strong> the image already defines one against
+          <code>/healthz</code> on 8080, which is unauthenticated precisely so this works.
+        </li>
+        <li>
+          <strong>Deploy</strong>, then read the admin key from the deployment logs if you did not
+          set one.
+        </li>
+      </ol>
+
+      <p>
+        Reaching the dashboard afterwards: the container port <code>3000</code> is not published to
+        the internet, so use an SSH tunnel to the VM —
+      </p>
+
+      <pre><code>ssh -L 3000:127.0.0.1:3000 you@your-vm
+# then open http://127.0.0.1:3000/internal/admin</code></pre>
+
+      <p>— or put the VM on your tailnet and use the Tailscale route below.</p>
+
+      <h2 id="tailscale">Tailscale</h2>
+      <p>
+        Tailscale solves both halves of the exposure problem: a private path to the dashboard, and
+        an optional public path to the API without owning a domain.</p>
+
+      <h3>Private: the admin dashboard on your tailnet</h3>
+      <pre><code># On the host
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Publish the internal port to the tailnet only
+tailscale serve --bg 3000</code></pre>
+      <p>
+        The dashboard is then at <code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/internal/admin</code>,
+        reachable from your devices and nothing else. If you are running under Docker, bind the
+        container's admin port to the host's Tailscale address rather than to
+        <code>0.0.0.0</code>.
+      </p>
+
+      <h3>Public: the API over Funnel</h3>
+      <pre><code># Expose only the public port to the internet, with TLS handled for you
+tailscale funnel --bg 8080</code></pre>
+      <p>
+        Funnel gives you an HTTPS hostname on <code>ts.net</code>. Set
+        <code>FLAGIT_PUBLIC_URL</code> to it so webhook payloads carry a working ticket link.
+      </p>
+
+      <div class="note">
+        <strong>Funnel exposes exactly one port.</strong> Point it at 8080 and never at 3000. Funnel
+        requires HTTPS enabled on the tailnet and the node tagged for funnel use; check
+        <code>tailscale funnel status</code> if the hostname does not resolve.
+      </div>
+
+      <h2 id="binary">Bare binary</h2>
+      <p>No Docker anywhere in sight:</p>
+      <pre><code>make web      # build the Svelte bundles and stage them for embedding
+make build    # produce bin/flagit with the frontend inside
+
+./bin/flagit --db-path /var/lib/flagit/flagit.db \
+             --public-url https://flagit.example.com</code></pre>
+
+      <p>A minimal systemd unit:</p>
+      <pre><code>[Unit]
+Description=Flagit
+After=network-online.target
+
+[Service]
+User=flagit
+Environment=FLAGIT_PUBLIC_URL=https://flagit.example.com
+ExecStart=/usr/local/bin/flagit --db-path /var/lib/flagit/flagit.db
+Restart=on-failure
+StateDirectory=flagit
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+      <p>
+        Both servers shut down gracefully on <code>SIGTERM</code>: in-flight requests get 15
+        seconds, and outbound Hermes webhooks get a further 20 to drain rather than being dropped.
+      </p>
+
+      <h2 id="operate">Operating</h2>
+
+      <h3>Backups</h3>
+      <p>
+        The entire state is one SQLite file. Copy it with SQLite's own backup so you never capture a
+        half-written transaction:
+      </p>
+      <pre><code>docker compose exec flagit /bin/sh -c \
+  'sqlite3 /data/flagit.db ".backup /data/backup.db"' || \
+docker compose cp flagit:/data/flagit.db ./flagit-backup.db</code></pre>
+      <p>
+        The Alpine runtime image is deliberately minimal and has no <code>sqlite3</code> binary, so
+        in practice: stop the container, copy the file, start it again. Downtime is a second or two.
+      </p>
+
+      <h3>Upgrades</h3>
+      <pre><code>git pull
+docker compose up -d --build</code></pre>
+      <p>
+        Schema migrations run automatically at startup. The admin key survives an upgrade — its hash
+        is stored in the database, not baked into the image.
+      </p>
+
+      <h3>Lost the admin key?</h3>
+      <p>
+        Nothing can recover it; only the hash is stored. Set <code>FLAGIT_ADMIN_KEY</code> to a new
+        value and restart — the new key is hashed and replaces the old one.
+      </p>
+
+      <h3>Checking it is alive</h3>
+      <pre><code>curl -s http://127.0.0.1:8080/healthz
+{"data":{"status":"ok"}}</code></pre>
+
+      <p>
+        Both routers answer <code>/healthz</code> without a credential, so uptime monitoring needs
+        no secrets.
+      </p>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <span>Flagit — MIT licensed. Built with Go, SQLite and Svelte.</span>
+        <span><a href="https://github.com/radaiko/flagit">github.com/radaiko/flagit</a></span>
+      </div>
+    </footer>
+  </body>
+</html>

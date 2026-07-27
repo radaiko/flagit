@@ -16,6 +16,7 @@
   import LanguageToggle from '../lib/LanguageToggle.svelte';
   import CreateTicket from './CreateTicket.svelte';
   import ViewTicket from './ViewTicket.svelte';
+  import Help from './Help.svelte';
 
   let {
     client: providedClient,
@@ -55,16 +56,44 @@
     lookupId = '';
     screen = 'create';
   }
+
+  // Help is a detour, not a destination: it returns to whatever was on screen
+  // when it was opened, so someone reading it mid-report does not lose their
+  // place.
+  let screenBeforeHelp = $state('create');
+
+  function showHelp() {
+    if (screen !== 'help') screenBeforeHelp = screen;
+    screen = 'help';
+  }
+
+  function closeHelp() {
+    screen = screenBeforeHelp;
+  }
 </script>
 
 <div class="overlay">
   <header class="bar">
     <span class="brand mono">{t('app.name', lang)}</span>
-    <LanguageToggle {lang} onchange={setLanguage} />
+    <div class="row">
+      <button
+        type="button"
+        class="help-link mono"
+        aria-current={screen === 'help' ? 'page' : undefined}
+        title={t('help.open', lang)}
+        onclick={showHelp}
+      >
+        <span aria-hidden="true">?</span>
+        <span class="visually-hidden">{t('help.open', lang)}</span>
+      </button>
+      <LanguageToggle {lang} onchange={setLanguage} />
+    </div>
   </header>
 
   <main>
-    {#if screen === 'view'}
+    {#if screen === 'help'}
+      <Help {lang} onback={closeHelp} />
+    {:else if screen === 'view'}
       <ViewTicket {client} {lang} initialId={lookupId} onback={showCreate} />
     {:else}
       <CreateTicket {client} {lang} {appInfo} oncheckstatus={showTicket} />
@@ -92,5 +121,25 @@
     font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--ink);
+  }
+
+  /* Sized to match the language toggle beside it, so the two read as one pair
+     of controls rather than a button and an afterthought. */
+  .help-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    color: var(--ink-3);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+  }
+
+  .help-link:hover,
+  .help-link[aria-current='page'] {
+    color: var(--ink);
+    border-color: var(--marker);
   }
 </style>
