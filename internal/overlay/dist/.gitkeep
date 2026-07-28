@@ -1,2 +1,0 @@
-Build output from web/ is copied here by `make web`. The directory must exist
-for the //go:embed directive in overlay.go to compile.

@@ -1,0 +1,44 @@
+name: Pages
+
+# Publishes the static site in docs/ to GitHub Pages.
+#
+# The site has no build step — it is plain HTML, CSS and a handful of PNGs — so
+# this workflow only uploads the directory. Enable it once under
+# Settings → Pages → Source → GitHub Actions; after that every push to main that
+# touches docs/ republishes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and let a newer push win rather than queueing
+# behind a run that is already stale.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
