@@ -4,17 +4,13 @@
       <stop offset="0%" stop-color="#1a1d24"/>
       <stop offset="100%" stop-color="#0d0f13"/>
     </linearGradient>
-    <linearGradient id="flag" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="bugGrad" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#ff6a33"/>
       <stop offset="100%" stop-color="#e04a10"/>
     </linearGradient>
-    <linearGradient id="flagFeature" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="featureGrad" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#5aa0f5"/>
       <stop offset="100%" stop-color="#2f80ed"/>
-    </linearGradient>
-    <linearGradient id="pole" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#e4e1da"/>
-      <stop offset="100%" stop-color="#b6bac2"/>
     </linearGradient>
   </defs>
 
@@ -24,41 +20,36 @@
   <!-- Subtle inner border -->
   <rect width="1024" height="1024" rx="220" fill="none" stroke="#2c3037" stroke-width="2"/>
 
-  <!-- Flag pole -->
-  <rect x="494" y="140" width="36" height="660" rx="18" fill="url(#pole)"/>
+  <!-- Bug circle — orange, large, left side -->
+  <circle cx="410" cy="512" r="210" fill="url(#bugGrad)"/>
 
-  <!-- Feature flag (blue) — top, waving right -->
-  <path d="M530 160 C580 160 600 220 660 240 C600 260 580 320 530 320 L530 160Z" fill="url(#flagFeature)"/>
-
-  <!-- Feature flag plus sign -->
-  <line x1="580" y1="210" x2="630" y2="210" stroke="#ffffff" stroke-width="14" stroke-linecap="round"/>
-  <line x1="605" y1="185" x2="605" y2="235" stroke="#ffffff" stroke-width="14" stroke-linecap="round"/>
-
-  <!-- Bug flag (orange) — bottom, waving right -->
-  <path d="M530 340 C580 340 600 400 660 420 C600 440 580 500 530 500 L530 340Z" fill="url(#flag)"/>
-
-  <!-- Bug icon inside the orange flag — stylized ladybug/bug body -->
-  <!-- Bug body -->
-  <ellipse cx="590" cy="420" rx="28" ry="22" fill="#ffffff" opacity="0.95"/>
+  <!-- Stylized bug inside the orange circle -->
+  <!-- Bug body (oval, tilted slightly) -->
+  <ellipse cx="410" cy="520" rx="70" ry="55" fill="#ffffff" opacity="0.95"/>
   <!-- Bug head -->
-  <circle cx="618" cy="410" r="10" fill="#ffffff" opacity="0.95"/>
-  <!-- Bug center line (wing split) -->
-  <line x1="590" y1="398" x2="590" y2="442" stroke="#e04a10" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="460" cy="500" r="28" fill="#ffffff" opacity="0.95"/>
+  <!-- Wing split line -->
+  <path d="M410 465 Q420 520 410 575" stroke="#e04a10" stroke-width="5" stroke-linecap="round" fill="none"/>
   <!-- Bug spots -->
-  <circle cx="580" cy="412" r="4" fill="#e04a10"/>
-  <circle cx="582" cy="432" r="3.5" fill="#e04a10"/>
-  <circle cx="601" cy="420" r="3.5" fill="#e04a10"/>
-  <!-- Bug antennae -->
-  <line x1="622" y1="405" x2="632" y2="392" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
-  <line x1="622" y1="405" x2="635" y2="402" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
-  <!-- Bug legs -->
-  <line x1="575" y1="415" x2="562" y2="410" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
-  <line x1="575" y1="425" x2="562" y2="430" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="385" cy="500" r="9" fill="#e04a10"/>
+  <circle cx="440" cy="510" r="8" fill="#e04a10"/>
+  <circle cx="390" cy="540" r="7" fill="#e04a10"/>
+  <circle cx="435" cy="545" r="7" fill="#e04a10"/>
+  <!-- Antennae -->
+  <path d="M475 485 Q495 460 505 450" stroke="#ffffff" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <path d="M475 485 Q500 470 515 470" stroke="#ffffff" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <!-- Legs -->
+  <line x1="355" y1="510" x2="330" y2="500" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <line x1="355" y1="525" x2="330" y2="530" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <line x1="355" y1="540" x2="335" y2="555" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
 
-  <!-- Flag pole base / ground marker -->
-  <ellipse cx="512" cy="820" rx="120" ry="18" fill="#ff5a1f" opacity="0.15"/>
-  <ellipse cx="512" cy="820" rx="80" ry="10" fill="#ff5a1f" opacity="0.25"/>
+  <!-- Feature circle — blue, smaller, overlapping right -->
+  <circle cx="640" cy="440" r="170" fill="url(#featureGrad)"/>
 
-  <!-- Subtle highlight on pole -->
-  <rect x="502" y="140" width="8" height="660" rx="4" fill="#ffffff" opacity="0.1"/>
+  <!-- Plus sign inside blue circle -->
+  <line x1="595" y1="440" x2="685" y2="440" stroke="#ffffff" stroke-width="24" stroke-linecap="round"/>
+  <line x1="640" y1="395" x2="640" y2="485" stroke="#ffffff" stroke-width="24" stroke-linecap="round"/>
+
+  <!-- Subtle overlap shadow between circles -->
+  <ellipse cx="540" cy="480" rx="30" ry="15" fill="#0d0f13" opacity="0.3"/>
 </svg>
