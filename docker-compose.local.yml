@@ -1,0 +1,18 @@
+# Local-only overlay. Never used by Coolify — apply it explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d flagit
+#
+# Name the service: without a TS_AUTHKEY the sidecar cannot log in and would sit
+# in a restart loop, which has nothing to do with what you are testing.
+#
+# It publishes the admin dashboard on loopback so you can open
+# http://127.0.0.1:3000/internal/admin without a tailnet. The public port is
+# published too, so the overlay is reachable at http://127.0.0.1:8080.
+#
+# Both bindings are pinned to 127.0.0.1: nothing here is safe to expose, and on
+# a server the Tailscale sidecar is the supported path to port 3000.
+services:
+  flagit:
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:3000:3000"

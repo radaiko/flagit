@@ -42,10 +42,19 @@ flagit/
 │   │   ├── dashboard/         # Admin dashboard
 │   │   └── lib/               # Shared components
 │   └── tests/                 # Vitest tests
+├── deploy/tailscale/          # serve.json for the admin-dashboard sidecar
 ├── Dockerfile
-├── docker-compose.yml
+├── docker-compose.yml         # Coolify deployment: no host ports published
+├── docker-compose.local.yml   # opt-in overlay, publishes both ports on loopback
 └── README.md
 ```
+
+## Deployment
+- Coolify (Docker Compose) on a Hetzner VM; public API at https://flagit.spitzbub.app
+- Neither port is published to the host: Coolify's proxy routes the domain to container port 8080
+- Admin dashboard (3000) is reachable only through the Tailscale sidecar `flagit-admin`; it never gets a public domain
+- Required secrets, set in Coolify and never in the repo: `FLAGIT_ADMIN_KEY`, `TS_AUTHKEY`
+- SQLite persists on the `flagit_data` volume at `/data`; tailnet identity on `tailscale_state`
 
 ## Key Features
 - Ticket creation (bug/feature) with unique ID (e.g. FLG-7X3K9Q)

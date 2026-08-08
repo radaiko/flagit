@@ -13,7 +13,7 @@ No user accounts, no email, no contact info — just a unique ticket ID for two-
 - 🤖 **Hermes integration** — new tickets trigger automated investigation via Claude Code
 - 🌐 **Web overlay** — embeddable web UI for apps (webview/modal)
 - 📊 **Admin dashboard** — manage tickets, mass operations, per-app settings
-- 🔒 **Secure by design** — public API via Tailscale Funnel, admin UI on Tailscale network only
+- 🔒 **Secure by design** — public API behind TLS on your own domain (or Tailscale Funnel), admin UI on your tailnet only
 - 🇩🇪 **Dual language** — German and English, auto-detected with manual toggle
 
 ## Tech Stack
@@ -25,9 +25,17 @@ No user accounts, no email, no contact info — just a unique ticket ID for two-
 ## Quick Start
 
 ```bash
-# Build and run with Docker
+# Build and run with Docker. Neither port is published to the host: the public
+# API is meant to sit behind a reverse proxy, and the admin dashboard behind the
+# Tailscale sidecar (set TS_AUTHKEY).
 docker compose up -d
+
+# Locally, publish both on loopback instead and skip the sidecar — dashboard at
+# http://127.0.0.1:3000/internal/admin
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d flagit
 ```
+
+See [docs/deployment.html](docs/deployment.html) for the Coolify and Tailscale setup.
 
 ## Documentation
 

@@ -1,29 +1,78 @@
+# Flagit — Coolify-compatible Docker Compose deployment.
+#
+# Two audiences, two very different paths in:
+#
+#   flagit:8080  public API and web overlay. Not published to the host: Coolify's
+#                proxy reaches it over the compose network and terminates TLS for
+#                https://flagit.spitzbub.app.
+#   flagit:3000  internal API and admin dashboard. Not published to the host and
+#                never given a Coolify domain. The only way in is the Tailscale
+#                sidecar below, which serves it at flagit-admin.<tailnet>.ts.net.
+#
+# Nothing here binds a host port, so the VM firewall stays closed and the admin
+# dashboard cannot be reached from the internet even by accident. To publish the
+# dashboard on loopback for local work, add docker-compose.local.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d flagit
 services:
   flagit:
     build: .
-    image: flagit
-    container_name: flagit
     restart: unless-stopped
 
-    ports:
-      # Public API and web overlay — this is the one apps talk to.
-      - "8080:8080"
-      # Internal API and admin dashboard. Bound to loopback so it is never
-      # reachable from the internet by default: reach it over an SSH tunnel, or
-      # bind it to this host's Tailscale address instead ("100.x.y.z:3000:3000")
-      # to expose it to your tailnet only.
-      - "127.0.0.1:3000:3000"
+    # `expose`, not `ports`: reachable from the compose network (Coolify's proxy,
+    # the Tailscale sidecar) but never bound to a host interface. Coolify routes
+    # the domain to 8080; 3000 stays unrouted.
+    expose:
+      - "8080"
+      - "3000"
 
     volumes:
+      # SQLite lives here. Mount this as a persistent volume in Coolify or every
+      # redeploy starts from an empty database.
       - flagit_data:/data
 
     environment:
-      # Externally reachable base URL. Used to build the ticket link in the
-      # Hermes webhook payload.
-      FLAGIT_PUBLIC_URL: ${FLAGIT_PUBLIC_URL:-}
-      # Leave unset on first run: Flagit generates a key and prints it once to
-      # the container log (`docker compose logs flagit`).
-      FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY:-}
+      # Externally reachable base URL, used to build the ticket link in the
+      # Hermes webhook payload. Must match the domain Coolify routes to 8080.
+      FLAGIT_PUBLIC_URL: ${FLAGIT_PUBLIC_URL:-https://flagit.spitzbub.app}
+      # Required secret — set it in Coolify, never in a file in this repository.
+      # Left empty, Flagit falls back to its old behaviour: it generates a key
+      # and prints it once to the container log.
+      FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY}
+
+  # Tailscale node dedicated to the admin dashboard. It is a separate identity
+  # from any tailscale running on the host, so revoking it takes the dashboard
+  # offline without touching anything else on the tailnet.
+  tailscale-admin:
+    image: tailscale/tailscale:latest
+    restart: unless-stopped
+    hostname: flagit-admin
+
+    environment:
+      # Required secret — a Tailscale auth key, set in Coolify. Tag it (for
+      # example tag:flagit-admin) so the node does not inherit key expiry.
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      # Node name on the tailnet: flagit-admin.<tailnet>.ts.net.
+      TS_HOSTNAME: flagit-admin
+      TS_STATE_DIR: /var/lib/tailscale
+      # Mounted as a directory, not a file, so tailscaled notices edits to it.
+      TS_SERVE_CONFIG: /config/serve.json
+      # Userspace networking: proxying inbound traffic needs no /dev/net/tun and
+      # no NET_ADMIN capability, which keeps the sidecar unprivileged.
+      TS_USERSPACE: "true"
+      # Keep Docker's embedded resolver in place — MagicDNS would replace it and
+      # the serve target below resolves the compose service name "flagit".
+      TS_ACCEPT_DNS: "false"
+
+    volumes:
+      # Node identity. Without it every restart burns a new device on the tailnet.
+      - tailscale_state:/var/lib/tailscale
+      - ./deploy/tailscale:/config:ro
+
+    depends_on:
+      flagit:
+        condition: service_healthy
 
 volumes:
   flagit_data:
+  tailscale_state:

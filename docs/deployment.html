@@ -75,7 +75,8 @@
                 (<code>/internal/admin</code>), <code>/healthz</code>
               </td>
               <td>
-                Private. A tailnet address, or loopback plus an SSH tunnel. Never the open internet.
+                Private. A tailnet address, or loopback plus an SSH tunnel. Never the open internet,
+                and never a domain on the public proxy.
               </td>
             </tr>
           </tbody>
@@ -186,21 +187,61 @@ docker compose logs flagit</code></pre>
   flagit:
     build: .
     restart: unless-stopped
-    ports:
-      - "8080:8080"                 # public: apps talk to this
-      - "127.0.0.1:3000:3000"       # internal: loopback only by default
+    expose:
+      - "8080"                      # public API — reached through a proxy, not the host
+      - "3000"                      # admin — reached through the Tailscale sidecar only
     volumes:
       - flagit_data:/data
     environment:
-      FLAGIT_PUBLIC_URL: ${FLAGIT_PUBLIC_URL:-}
-      FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY:-}
+      FLAGIT_PUBLIC_URL: ${FLAGIT_PUBLIC_URL:-https://flagit.spitzbub.app}
+      FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY}
+
+  tailscale-admin:
+    image: tailscale/tailscale:latest
+    restart: unless-stopped
+    hostname: flagit-admin
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_HOSTNAME: flagit-admin
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+      TS_ACCEPT_DNS: "false"
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+      - ./deploy/tailscale:/config:ro
+    depends_on:
+      flagit:
+        condition: service_healthy
 
 volumes:
-  flagit_data:</code></pre>
+  flagit_data:
+  tailscale_state:</code></pre>
 
       <p>
-        To expose the admin port to your tailnet instead of loopback, bind it to the host's Tailscale
-        address: <code>"100.x.y.z:3000:3000"</code>.
+        Neither service binds a host port. <code>expose</code> publishes to the compose network only,
+        which is all a reverse proxy on the same network needs, and it means no firewall rule can be
+        forgotten. The dashboard has exactly one route in — the sidecar described under
+        <a href="#tailscale">Tailscale</a>.
+      </p>
+
+      <p>
+        For local work, an overlay publishes both ports on loopback so you can open the dashboard
+        without a tailnet:
+      </p>
+
+      <pre><code>docker compose -f docker-compose.yml -f docker-compose.local.yml up -d flagit
+# http://127.0.0.1:8080  overlay and public API
+# http://127.0.0.1:3000/internal/admin  dashboard</code></pre>
+
+      <p>
+        Naming the service is deliberate: without a <code>TS_AUTHKEY</code> the sidecar cannot log in
+        and would sit in a restart loop.
+      </p>
+
+      <p>
+        <code>docker-compose.local.yml</code> is never loaded automatically — not by
+        <code>docker compose up</code>, not by Coolify — so it cannot leak into a deployment.
       </p>
 
       <div class="note">
@@ -212,49 +253,108 @@ volumes:
 
       <h2 id="coolify">Coolify on a Hetzner VM</h2>
       <p>
-        Coolify runs the same compose file; the work is in telling it which port is public and where
-        the data lives.
+        Coolify runs the same compose file; the work is in telling it which port is public, which
+        secrets exist and where the data lives. The reference deployment below uses
+        <code>flagit.spitzbub.app</code> for the public API and keeps the dashboard on the tailnet.
       </p>
 
       <ol>
         <li>
-          <strong>New resource → Docker Compose</strong>, pointed at the repository and branch. The
-          <code>Dockerfile</code> at the root is the build.
+          <strong>DNS first.</strong> An <code>A</code> record for the public hostname pointing at
+          the VM. Coolify cannot issue a certificate before the name resolves.
         </li>
         <li>
-          <strong>Environment variables:</strong> set <code>FLAGIT_PUBLIC_URL</code> to the public
-          hostname you will assign (for example <code>https://flagit.example.com</code>). Add
-          <code>FLAGIT_ADMIN_KEY</code> as a secret if you want to choose the key rather than read
-          it from the logs.
+          <strong>New resource → Docker Compose</strong>, in your project, pointed at the repository
+          and the <code>main</code> branch, with <code>docker-compose.yml</code> as the compose file.
+          The <code>Dockerfile</code> at the root is the build.
         </li>
         <li>
-          <strong>Domains:</strong> map your hostname to container port <code>8080</code> only.
-          Coolify's proxy terminates TLS and issues the certificate. Leave <code>3000</code>
-          unmapped — no domain, no proxy rule.
+          <strong>Domains:</strong> on the <code>flagit</code> service only, set
+          <code>https://flagit.spitzbub.app:8080</code>. The port suffix tells Coolify's proxy which
+          container port to route to; it is not published on the host. Give the
+          <code>tailscale-admin</code> service no domain at all, and never map a domain to port
+          <code>3000</code> — that would put the admin dashboard on the public internet.
         </li>
         <li>
-          <strong>Persistent storage:</strong> a named volume mounted at <code>/data</code>. Without
-          it, every redeploy starts from an empty database.
+          <strong>Environment variables:</strong> three, of which two are secrets.
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Variable</th>
+                  <th>Value</th>
+                  <th>Kind</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>FLAGIT_PUBLIC_URL</code></td>
+                  <td><code>https://flagit.spitzbub.app</code></td>
+                  <td>Plain. Must match the domain above, no trailing slash.</td>
+                </tr>
+                <tr>
+                  <td><code>FLAGIT_ADMIN_KEY</code></td>
+                  <td>a long random string you generate</td>
+                  <td>
+                    Secret (“Is Build Variable?” off, value hidden). Required in this deployment:
+                    the dashboard is the whole internal API.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>TS_AUTHKEY</code></td>
+                  <td><code>tskey-auth-…</code> from the Tailscale admin console</td>
+                  <td>Secret. Consumed once, on the sidecar's first start.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </li>
+        <li>
+          <strong>Persistent storage:</strong> the compose file declares the named volumes
+          <code>flagit_data</code> (mounted at <code>/data</code>, the SQLite file) and
+          <code>tailscale_state</code> (at <code>/var/lib/tailscale</code>, the tailnet identity).
+          Coolify creates both; confirm they are listed under Storages before the first deploy.
+          Without the first, every redeploy starts from an empty database. Without the second, every
+          restart burns a new device on your tailnet.
         </li>
         <li>
           <strong>Healthcheck:</strong> the image already defines one against
-          <code>/healthz</code> on 8080, which is unauthenticated precisely so this works.
+          <code>/healthz</code> on 8080, which is unauthenticated precisely so this works. The
+          sidecar waits for it before starting.
         </li>
         <li>
-          <strong>Deploy</strong>, then read the admin key from the deployment logs if you did not
-          set one.
+          <strong>Deploy</strong>, then check both services: <code>curl</code> the public health
+          endpoint, and open the dashboard over the tailnet.
         </li>
       </ol>
 
+      <pre><code>curl -s https://flagit.spitzbub.app/healthz
+{"data":{"status":"ok"}}
+
+# From any device on the tailnet
+open https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/admin</code></pre>
+
+      <div class="note note-danger">
+        <strong>Do not publish ports from this compose file.</strong> Adding a
+        <code>ports:</code> entry — for either service — binds it on the VM's public interface and
+        bypasses the proxy entirely. Port <code>3000</code> in particular has no business on the
+        host. The same goes for the VM firewall: only 80 and 443 belong open. Coolify's own
+        dashboard on <code>8000</code> and SSH should be reachable over your tailnet or a trusted
+        source range, not from the internet.
+      </div>
+
       <p>
-        Reaching the dashboard afterwards: the container port <code>3000</code> is not published to
-        the internet, so use an SSH tunnel to the VM —
+        If the sidecar is down and you need the dashboard anyway, port <code>3000</code> is not on
+        the host, so an <code>ssh -L</code> tunnel has nothing to attach to. Put a throwaway relay on
+        the compose network for as long as you need it:
       </p>
 
-      <pre><code>ssh -L 3000:127.0.0.1:3000 you@your-vm
-# then open http://127.0.0.1:3000/internal/admin</code></pre>
+      <pre><code># On the VM: bridge loopback:3000 to the container, and stop it when you are done.
+docker run --rm --network &lt;coolify-compose-network&gt; -p 127.0.0.1:3000:3000 \
+  alpine/socat tcp-listen:3000,fork,reuseaddr tcp:flagit:3000
 
-      <p>— or put the VM on your tailnet and use the Tailscale route below.</p>
+# From your machine
+ssh -L 3000:127.0.0.1:3000 you@your-vm</code></pre>
 
       <h2 id="tailscale">Tailscale</h2>
       <p>
@@ -262,20 +362,75 @@ volumes:
         an optional public path to the API without owning a domain.</p>
 
       <h3>Private: the admin dashboard on your tailnet</h3>
-      <pre><code># On the host
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-
-# Publish the internal port to the tailnet only
-tailscale serve --bg 3000</code></pre>
       <p>
-        The dashboard is then at <code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/internal/admin</code>,
-        reachable from your devices and nothing else. If you are running under Docker, bind the
-        container's admin port to the host's Tailscale address rather than to
-        <code>0.0.0.0</code>.
+        The compose file ships a sidecar for this — a Tailscale node of its own, named
+        <code>flagit-admin</code>, that reverse-proxies exactly one thing:
       </p>
 
+      <pre><code>https://flagit-admin.&lt;tailnet&gt;.ts.net/  →  http://flagit:3000</code></pre>
+
+      <p>
+        Its whole configuration is <code>deploy/tailscale/serve.json</code>, handed to the container
+        through <code>TS_SERVE_CONFIG</code>:
+      </p>
+
+      <pre><code>{
+  "TCP": { "443": { "HTTPS": true } },
+  "Web": {
+    "${TS_CERT_DOMAIN}:443": {
+      "Handlers": { "/": { "Proxy": "http://flagit:3000" } }
+    }
+  },
+  "AllowFunnel": { "${TS_CERT_DOMAIN}:443": false }
+}</code></pre>
+
+      <p>
+        A few of those choices matter. <code>${TS_CERT_DOMAIN}</code> is substituted by the container
+        with the node's own name, so the file never hardcodes a tailnet. The proxy target is the
+        compose service name rather than <code>localhost</code>, because the sidecar is a separate
+        container — which is also why <code>TS_ACCEPT_DNS</code> stays <code>false</code>: MagicDNS
+        would displace Docker's resolver and <code>flagit</code> would stop resolving. The directory
+        is mounted, not the file, so tailscaled sees edits. And Funnel is denied in writing.
+      </p>
+
+      <p>Three one-time things on the tailnet before the first deploy:</p>
+
+      <ol>
+        <li>
+          <strong>Enable HTTPS certificates</strong> (admin console → DNS → HTTPS Certificates).
+          Without them there is no certificate for port 443 and the node comes up unreachable.
+        </li>
+        <li>
+          <strong>Create an auth key</strong> (Settings → Keys). Tag it, for example
+          <code>tag:flagit-admin</code>, so the node is exempt from key expiry; the tag needs an
+          owner in your ACL policy. Pass it as the <code>TS_AUTHKEY</code> secret. It is consumed on
+          first start — after that the identity lives in the <code>tailscale_state</code> volume.
+        </li>
+        <li>
+          <strong>Check your ACLs</strong> if they are not default-allow: the devices that should
+          reach the dashboard need access to <code>flagit-admin</code> on port 443.
+        </li>
+      </ol>
+
+      <p>
+        The dashboard is then at
+        <code>https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/admin</code>, reachable from your
+        devices and nothing else. Revoking the node in the admin console takes the dashboard offline
+        without touching the public API or any other machine on the tailnet.
+      </p>
+
+      <div class="note">
+        <strong>Running Tailscale on the host instead.</strong> Installing tailscale on the VM and
+        running <code>tailscale serve --bg 3000</code> also works, but only if the admin port is
+        published to the host — which this deployment deliberately does not do. The sidecar keeps
+        that port off the host entirely.
+      </div>
+
       <h3>Public: the API over Funnel</h3>
+      <p>
+        An alternative to the Coolify route above, for when you do not want a domain of your own.
+        Use one or the other, not both.
+      </p>
       <pre><code># Expose only the public port to the internet, with TLS handled for you
 tailscale funnel --bg 8080</code></pre>
       <p>
