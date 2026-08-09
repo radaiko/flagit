@@ -23,14 +23,38 @@ func TestGenerateTicketIDShape(t *testing.T) {
 	}
 }
 
-func TestGenerateTicketIDUsesBase62Only(t *testing.T) {
+func TestGenerateTicketIDUsesTheDocumentedAlphabet(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		id, err := GenerateTicketID()
 		require.NoError(t, err)
 		for _, c := range id[len(TicketIDPrefix):] {
-			assert.True(t, strings.ContainsRune(base62, c), "%q is not base62", c)
+			assert.True(t, strings.ContainsRune(ticketIDAlphabet, c),
+				"%q is outside the ticket ID alphabet", c)
 		}
 	}
+}
+
+// TestGenerateTicketIDIsUppercase pins the one property the rest of the system
+// relies on. A ticket ID is read off a tag, spoken, and typed back into a field
+// that is styled uppercase and asks the keyboard to capitalise; the lookup then
+// hits `WHERE id = ?` on a TEXT primary key, which SQLite compares with BINARY
+// collation. An ID carrying a lowercase character therefore stops matching
+// itself the moment it passes through a person or an uppercasing UI.
+func TestGenerateTicketIDIsUppercase(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		id, err := GenerateTicketID()
+		require.NoError(t, err)
+		assert.Equal(t, strings.ToUpper(id), id,
+			"%s changes when uppercased, so it cannot survive a round trip through the UI", id)
+	}
+}
+
+// TestValidTicketIDStillAcceptsLegacyLowercase guards the compatibility half of
+// the fix: tickets filed before the alphabet changed have mixed-case IDs, and
+// the shape guard must let them through to the database rather than reject them
+// as malformed.
+func TestValidTicketIDStillAcceptsLegacyLowercase(t *testing.T) {
+	assert.True(t, ValidTicketID("FLG-Wsbu3y"))
 }
 
 func TestValidTicketID(t *testing.T) {

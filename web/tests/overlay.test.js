@@ -253,11 +253,31 @@ describe('ViewTicket', () => {
     const client = stubPublicClient();
     render(ViewTicket, { props: { client, lang: 'en' } });
 
-    await userEvent.type(screen.getByLabelText('Ticket ID'), 'flg-7x3k9q');
+    await userEvent.type(screen.getByLabelText('Ticket ID'), 'FLG-7X3K9Q');
     await userEvent.click(screen.getByRole('button', { name: 'Open ticket' }));
 
     await waitFor(() => expect(client.getTicket).toHaveBeenCalledWith('FLG-7X3K9Q'));
     expect(await screen.findByRole('heading', { name: 'Crash on save' })).toBeInTheDocument();
+  });
+
+  it('trims an ID without re-casing it', async () => {
+    // Regression: the lookup used to uppercase what it was given. Ticket IDs
+    // are compared byte for byte by the server, so that made every ticket
+    // filed with a mixed-case ID unreachable.
+    const client = stubPublicClient();
+    render(ViewTicket, { props: { client, lang: 'en' } });
+
+    await userEvent.type(screen.getByLabelText('Ticket ID'), '  FLG-Wsbu3y  ');
+    await userEvent.click(screen.getByRole('button', { name: 'Open ticket' }));
+
+    await waitFor(() => expect(client.getTicket).toHaveBeenCalledWith('FLG-Wsbu3y'));
+  });
+
+  it('opens a mixed-case ID handed over by the success screen', async () => {
+    const client = stubPublicClient();
+    render(ViewTicket, { props: { client, lang: 'en', initialId: 'FLG-Wsbu3y' } });
+
+    await waitFor(() => expect(client.getTicket).toHaveBeenCalledWith('FLG-Wsbu3y'));
   });
 
   it('opens straight away when handed an ID', async () => {

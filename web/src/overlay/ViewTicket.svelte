@@ -30,7 +30,11 @@
 
   async function load(id) {
     errorKey = '';
-    const trimmed = (id ?? '').trim().toUpperCase();
+    // Trimmed, but never re-cased: the server compares ticket IDs byte for
+    // byte, so uppercasing here turned every ID that still carries a lowercase
+    // character — every ticket filed before the ID alphabet was narrowed — into
+    // a 404, including the one the success screen had just handed over.
+    const trimmed = (id ?? '').trim();
     if (!trimmed) {
       errorKey = 'error.idRequired';
       return;

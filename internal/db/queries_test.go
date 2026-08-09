@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +63,41 @@ func TestCreateTicketHonoursExplicitID(t *testing.T) {
 	got, err := d.GetTicket("FLG-FIXED1")
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusResolved, got.Status)
+}
+
+// TestGetTicketIsCaseSensitive documents the SQLite boundary the ID alphabet
+// has to respect: `id` is a TEXT PRIMARY KEY with the default BINARY collation,
+// so a lookup matches byte for byte and differs-only-by-case is a miss. This is
+// deliberate — it keeps the primary-key index usable — which is exactly why
+// generated IDs must not contain a character whose case can change in transit.
+func TestGetTicketIsCaseSensitive(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	ticket.ID = "FLG-Wsbu3y" // a legacy, mixed-case ID
+	require.NoError(t, d.CreateTicket(ticket))
+
+	got, err := d.GetTicket("FLG-Wsbu3y")
+	require.NoError(t, err)
+	assert.Equal(t, "FLG-Wsbu3y", got.ID)
+
+	_, err = d.GetTicket("FLG-WSBU3Y")
+	assert.ErrorIs(t, err, ErrNotFound, "the store compares IDs byte for byte")
+}
+
+// TestGeneratedTicketIDSurvivesUppercasing is the store-level half of the
+// production bug: an ID handed to a caller must still resolve after a UI that
+// uppercases it (the overlay's lookup field) hands it back.
+func TestGeneratedTicketIDSurvivesUppercasing(t *testing.T) {
+	d := newTestDB(t)
+
+	for i := 0; i < 100; i++ {
+		ticket := newTicket("notes")
+		require.NoError(t, d.CreateTicket(ticket))
+
+		got, err := d.GetTicket(strings.ToUpper(ticket.ID))
+		require.NoError(t, err, "ticket %s is unreachable once uppercased", ticket.ID)
+		assert.Equal(t, ticket.ID, got.ID)
+	}
 }
 
 func TestCreateTicketRejectsDuplicateExplicitID(t *testing.T) {
