@@ -36,6 +36,7 @@ func TestParseFlagsDefaults(t *testing.T) {
 	assert.Empty(t, cfg.publicURL)
 	assert.False(t, cfg.dev)
 	assert.Equal(t, "info", cfg.logLevel)
+	assert.Empty(t, cfg.commit)
 }
 
 func TestParseFlagsOverrides(t *testing.T) {
@@ -47,6 +48,7 @@ func TestParseFlagsOverrides(t *testing.T) {
 		"--public-url", "https://flagit.example/",
 		"--dev",
 		"--log-level", "debug",
+		"--commit", "212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa",
 	}, io.Discard)
 
 	require.NoError(t, err)
@@ -57,6 +59,7 @@ func TestParseFlagsOverrides(t *testing.T) {
 	assert.Equal(t, "https://flagit.example", cfg.publicURL, "a trailing slash is trimmed")
 	assert.True(t, cfg.dev)
 	assert.Equal(t, "debug", cfg.logLevel)
+	assert.Equal(t, "212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa", cfg.commit)
 }
 
 func TestParseFlagsReadsEnvironment(t *testing.T) {
@@ -66,6 +69,7 @@ func TestParseFlagsReadsEnvironment(t *testing.T) {
 	t.Setenv("FLAGIT_ADMIN_KEY", "env-key")
 	t.Setenv("FLAGIT_PUBLIC_URL", "https://env.example")
 	t.Setenv("FLAGIT_DEV", "true")
+	t.Setenv("FLAGIT_COMMIT", "aaaaaaabbbbbbbcccccccddddddd0000000eeeee")
 
 	cfg, err := parseFlags(nil, io.Discard)
 
@@ -76,6 +80,8 @@ func TestParseFlagsReadsEnvironment(t *testing.T) {
 	assert.Equal(t, "env-key", cfg.adminKey)
 	assert.Equal(t, "https://env.example", cfg.publicURL)
 	assert.True(t, cfg.dev)
+	assert.Equal(t, "aaaaaaabbbbbbbcccccccddddddd0000000eeeee", cfg.commit,
+		"Coolify exposes the deployed revision as SOURCE_COMMIT, mapped to FLAGIT_COMMIT in compose")
 }
 
 func TestFlagsBeatEnvironment(t *testing.T) {
@@ -282,6 +288,7 @@ func TestServerStartsAndServesRequests(t *testing.T) {
 			"--db-path", dbPath,
 			"--admin-key", "integration-key",
 			"--log-level", "error",
+			"--commit", "212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa",
 		}, io.Discard, io.Discard)
 	}()
 
@@ -316,9 +323,28 @@ func TestServerStartsAndServesRequests(t *testing.T) {
 	require.Len(t, listed.Data.Tickets, 1)
 	assert.Equal(t, created.Data.ID, listed.Data.Tickets[0].ID)
 
+	// The deployed commit reaches the dashboard's endpoint from the flag.
+	versionResp := get(t, adminURL+"/internal/version", map[string]string{api.HeaderAdminKey: "integration-key"})
+	require.Equal(t, http.StatusOK, versionResp.StatusCode)
+	var deployed struct {
+		Data struct {
+			Commit string `json:"commit"`
+			Short  string `json:"short"`
+			Known  bool   `json:"known"`
+		} `json:"data"`
+	}
+	decodeBody(t, versionResp, &deployed)
+	assert.Equal(t, "212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa", deployed.Data.Commit)
+	assert.Equal(t, "212b000", deployed.Data.Short)
+	assert.True(t, deployed.Data.Known)
+
 	// The public port must not expose the internal API at all.
 	leaked := get(t, publicURL+"/internal/tickets", map[string]string{api.HeaderAdminKey: "integration-key"})
 	assert.Equal(t, http.StatusNotFound, leaked.StatusCode)
+
+	// ...and least of all the commit, which is admin-dashboard-only.
+	leakedVersion := get(t, publicURL+"/internal/version", map[string]string{api.HeaderAdminKey: "integration-key"})
+	assert.Equal(t, http.StatusNotFound, leakedVersion.StatusCode)
 
 	// Graceful shutdown on signal.
 	cancel()

@@ -66,6 +66,11 @@ export function stubAdminClient(overrides = {}) {
     listApps: vi.fn().mockResolvedValue([makeApp()]),
     updateApp: vi.fn().mockResolvedValue(makeApp({ autoProcessEnabled: true })),
     getSettings: vi.fn().mockResolvedValue({ globalAutoProcess: false, hermesWebhookUrl: '' }),
+    getVersion: vi.fn().mockResolvedValue({
+      commit: '212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa',
+      short: '212b000',
+      known: true,
+    }),
     updateSettings: vi
       .fn()
       .mockResolvedValue({ globalAutoProcess: true, hermesWebhookUrl: 'https://hermes.example/hook' }),

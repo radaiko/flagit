@@ -21,6 +21,7 @@ import (
 	"flagit/internal/model"
 	"flagit/internal/overlay"
 	"flagit/internal/service"
+	"flagit/internal/version"
 	"flagit/internal/webhook"
 )
 
@@ -52,6 +53,9 @@ type config struct {
 	dev       bool
 	viteURL   string
 	logLevel  string
+	// commit is the revision this container was deployed from. Empty falls
+	// back to whatever the linker stamped in at build time.
+	commit string
 }
 
 // parseFlags reads configuration from flags, falling back to environment
@@ -69,6 +73,7 @@ func parseFlags(args []string, out io.Writer) (*config, error) {
 	fs.BoolVar(&cfg.dev, "dev", envBool("FLAGIT_DEV", false), "dev mode: proxy the frontend to the Vite dev server instead of serving embedded files")
 	fs.StringVar(&cfg.viteURL, "vite-url", env("FLAGIT_VITE_URL", overlay.DefaultViteURL), "Vite dev server URL, used with -dev")
 	fs.StringVar(&cfg.logLevel, "log-level", env("FLAGIT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
+	fs.StringVar(&cfg.commit, "commit", env("FLAGIT_COMMIT", ""), "git revision this deployment was built from, shown in the admin dashboard (env FLAGIT_COMMIT; Coolify exposes it as SOURCE_COMMIT)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(out, "flagit — self-hosted in-app ticket system")
@@ -123,6 +128,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	svc.Dispatch = sender.Go
 
 	srv := api.NewServer(svc, adminKeyHash, logger)
+	srv.Commit = version.Resolve(cfg.commit)
 
 	if err := mountFrontend(srv, cfg, logger); err != nil {
 		return err
@@ -139,7 +145,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	logger.Info("starting flagit", "publicPort", cfg.port, "adminPort", cfg.adminPort, "dev", cfg.dev)
+	logger.Info("starting flagit", "publicPort", cfg.port, "adminPort", cfg.adminPort, "dev", cfg.dev,
+		"commit", srv.Commit)
 	err = serve(ctx, logger, public, internal)
 	drainWebhooks(logger, sender)
 	return err

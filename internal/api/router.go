@@ -105,6 +105,7 @@ func (s *Server) InternalRouter() http.Handler {
 		r.Patch("/apps/{name}", s.handleUpdateApp)
 		r.Get("/settings", s.handleGetSettings)
 		r.Patch("/settings", s.handleUpdateSettings)
+		r.Get("/version", s.handleVersion)
 	})
 
 	// The dashboard SPA authenticates in the browser with the admin key, so it

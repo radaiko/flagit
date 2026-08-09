@@ -7,6 +7,12 @@ DB_PATH     ?= ./data/flagit.db
 DOCKER_TAG  ?= flagit
 COVERAGE_MIN ?= 90
 
+# Revision stamped into the binary and shown in the admin dashboard. Resolved
+# from the checkout, so a local build names itself honestly; empty outside a
+# git checkout, which the dashboard reports as "unknown".
+GIT_COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null)
+LDFLAGS     := -s -w -X flagit/internal/version.Commit=$(GIT_COMMIT)
+
 .PHONY: help dev dev-web test test-go test-web coverage build web clean docker docker-run fmt vet lint
 
 help: ## Show this help
@@ -26,7 +32,7 @@ web: ## Build the Svelte frontend and stage it for embedding
 	cp -R $(WEB_DIST)/. $(EMBED_DIST)/
 
 build: web ## Build the production binary with the frontend embedded
-	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(BINARY) ./cmd/flagit
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/flagit
 
 test: test-go test-web ## Run every test
 
@@ -57,7 +63,7 @@ vet: ## Run go vet
 lint: fmt vet ## Format and vet
 
 docker: ## Build the Docker image
-	docker build -t $(DOCKER_TAG) .
+	docker build --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(DOCKER_TAG) .
 
 docker-run: docker ## Build and run the image locally
 	docker run --rm -p 8080:8080 -p 3000:3000 -v flagit_data:/data $(DOCKER_TAG)

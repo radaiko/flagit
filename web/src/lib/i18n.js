@@ -106,6 +106,11 @@ export const translations = {
     'admin.navTickets': 'Tickets',
     'admin.navSettings': 'Settings',
     'admin.navHelp': 'Help',
+    'admin.commitLabel': 'Commit',
+    'admin.commitUnknown': 'unknown',
+    'admin.commitCopy': 'Copy commit SHA',
+    'admin.commitCopyShort': 'Copy',
+    'admin.commitCopied': 'Copied',
 
     // Ticket list
     'list.heading': 'Tickets',
@@ -354,6 +359,11 @@ export const translations = {
     'admin.navTickets': 'Tickets',
     'admin.navSettings': 'Einstellungen',
     'admin.navHelp': 'Hilfe',
+    'admin.commitLabel': 'Commit',
+    'admin.commitUnknown': 'unbekannt',
+    'admin.commitCopy': 'Commit-SHA kopieren',
+    'admin.commitCopyShort': 'Kopieren',
+    'admin.commitCopied': 'Kopiert',
 
     // Ticket list
     'list.heading': 'Tickets',

@@ -24,6 +24,11 @@ type Server struct {
 	AdminKeyHash string
 	Logger       *slog.Logger
 
+	// Commit is the revision this build was deployed from. It is served only
+	// on the internal router, so it never reaches a public API response.
+	// Empty falls back to the build-time value, then to version.Unknown.
+	Commit string
+
 	// CreateLimiter caps unauthenticated ticket creation per client. Nil
 	// disables limiting, which is only appropriate in tests.
 	CreateLimiter *RateLimiter

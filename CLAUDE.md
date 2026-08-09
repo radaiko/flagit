@@ -55,6 +55,11 @@ flagit/
 - Admin dashboard (3000) is reachable only through the Tailscale sidecar `flagit-admin`; it never gets a public domain
 - Required secrets, set in Coolify and never in the repo: `FLAGIT_ADMIN_KEY`, `TS_AUTHKEY`
 - SQLite persists on the `flagit_data` volume at `/data`; tailnet identity on `tailscale_state`
+- Deployed revision: compose maps Coolify's `SOURCE_COMMIT` onto `FLAGIT_COMMIT` at runtime — no
+  Coolify setting needed. Runtime, not a build arg: Coolify keeps `SOURCE_COMMIT` out of builds by
+  default, and Compose build packs pass build vars via `--env-file`. `Dockerfile`'s `ARG GIT_COMMIT`
+  (→ `-X flagit/internal/version.Commit`) is the fallback for `make build`/`make docker`; runtime
+  wins, then the build value, then `unknown`
 
 ## Key Features
 - Ticket creation (bug/feature) with unique ID (e.g. FLG-7X3K9Q)
@@ -66,3 +71,5 @@ flagit/
 - Global auto-process toggle for new unknown apps (default: off)
 - Mass operations (bulk status update e.g. mark shipped in version X)
 - Commit history (dev-only, admin dashboard only)
+- Deployed commit in the dashboard footer (short SHA, full SHA on hover + copy), served by
+  `GET /internal/version` behind the admin key — never on the public API

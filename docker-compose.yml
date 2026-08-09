@@ -39,6 +39,13 @@ services:
       # Left empty, Flagit falls back to its old behaviour: it generates a key
       # and prints it once to the container log.
       FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY}
+      # Git revision this deployment was built from, shown in the admin
+      # dashboard footer so an operator can confirm what is actually running.
+      # SOURCE_COMMIT is set by Coolify for every deployment; nothing needs to
+      # be configured by hand. Outside Coolify it is simply unset and the
+      # dashboard reports "unknown". Runtime, not build-time, on purpose: a
+      # build argument would invalidate the Docker cache on every commit.
+      FLAGIT_COMMIT: ${SOURCE_COMMIT:-}
 
   # Tailscale node dedicated to the admin dashboard. It is a separate identity
   # from any tailscale running on the host, so revoking it takes the dashboard

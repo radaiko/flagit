@@ -226,5 +226,13 @@ export function createAdminClient({ adminKey, baseUrl = '', fetchImpl }) {
     updateSettings(patch) {
       return call('/internal/settings', { method: 'PATCH', body: patch });
     },
+
+    /**
+     * Which build is running: `{ commit, short, known }`. Admin-only — the
+     * deployed revision is never served on the public API.
+     */
+    getVersion() {
+      return call('/internal/version');
+    },
   };
 }

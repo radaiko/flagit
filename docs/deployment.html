@@ -140,6 +140,15 @@
               <td>Externally reachable base URL, used to build the link in webhook payloads.</td>
             </tr>
             <tr>
+              <td><code>--commit</code></td>
+              <td><code>FLAGIT_COMMIT</code></td>
+              <td>build value, else <code>unknown</code></td>
+              <td>
+                Git revision this deployment was built from, shown in the admin dashboard footer.
+                Falls back to the SHA stamped in at build time, then to <code>unknown</code>.
+              </td>
+            </tr>
+            <tr>
               <td><code>--log-level</code></td>
               <td><code>FLAGIT_LOG_LEVEL</code></td>
               <td><code>info</code></td>
@@ -323,6 +332,14 @@ volumes:
           sidecar waits for it before starting.
         </li>
         <li>
+          <strong>The deployed commit needs no configuration.</strong> Coolify sets
+          <code>SOURCE_COMMIT</code> to the revision it just deployed, and the compose file maps it
+          onto <code>FLAGIT_COMMIT</code> for the container. The dashboard footer then shows the
+          short SHA, with the full one on hover and behind the copy button. There is nothing to add
+          to the environment list; if you ever want to pin it by hand, set
+          <code>FLAGIT_COMMIT</code> explicitly and it wins.
+        </li>
+        <li>
           <strong>Deploy</strong>, then check both services: <code>curl</code> the public health
           endpoint, and open the dashboard over the tailnet.
         </li>
@@ -332,7 +349,25 @@ volumes:
 {"data":{"status":"ok"}}
 
 # From any device on the tailnet
-open https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/admin</code></pre>
+open https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/admin
+
+# Which commit is actually running? The dashboard footer answers this, and so
+# does the endpoint behind it. Admin key required; it is not on the public API.
+curl -s -H "X-Admin-Key: $FLAGIT_ADMIN_KEY" \
+  https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/version
+{"data":{"commit":"212b000f1e…","short":"212b000","known":true}}</code></pre>
+
+      <div class="note">
+        <strong>Why runtime and not a build argument.</strong> Coolify deliberately keeps
+        <code>SOURCE_COMMIT</code> out of Docker builds so the build cache survives a commit that
+        changed nothing relevant; including it is an opt-in
+        (<em>Include Source Commit in Build</em>, in the application's General settings), and for the
+        Docker Compose build pack build variables are passed by <code>--env-file</code> rather than
+        as <code>--build-arg</code>. Taking the value at runtime sidesteps both: every deploy reports
+        its revision, and no build is invalidated. The <code>GIT_COMMIT</code> build argument in the
+        <code>Dockerfile</code> remains for <code>make docker</code> and other builders, and is only
+        a fallback — the runtime value wins.
+      </div>
 
       <div class="note note-danger">
         <strong>Do not publish ports from this compose file.</strong> Adding a

@@ -9,6 +9,7 @@ import (
 	"flagit/internal/db"
 	"flagit/internal/model"
 	"flagit/internal/service"
+	"flagit/internal/version"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -341,6 +342,29 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, app, "app updated")
+}
+
+// versionResponse tells the admin dashboard which build is running. Short is
+// the abbreviation to display; Commit is the full SHA to copy or paste into a
+// git command. Known is false when neither the deployment nor the build
+// supplied a revision, so the dashboard can say so instead of showing a
+// meaningless value.
+type versionResponse struct {
+	Commit string `json:"commit"`
+	Short  string `json:"short"`
+	Known  bool   `json:"known"`
+}
+
+// handleVersion reports the deployed commit. Admin only — it is registered
+// under /internal, behind the admin key, and deliberately kept out of the
+// public router and out of the settings payload.
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	commit := version.Resolve(s.Commit)
+	s.writeJSON(w, http.StatusOK, versionResponse{
+		Commit: commit,
+		Short:  version.Short(commit),
+		Known:  version.Known(commit),
+	}, "")
 }
 
 // handleGetSettings returns the global configuration.

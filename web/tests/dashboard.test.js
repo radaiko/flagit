@@ -7,6 +7,7 @@ import TicketList from '../src/dashboard/TicketList.svelte';
 import TicketDetail from '../src/dashboard/TicketDetail.svelte';
 import MassOperations from '../src/dashboard/MassOperations.svelte';
 import Settings from '../src/dashboard/Settings.svelte';
+import BuildInfo from '../src/dashboard/BuildInfo.svelte';
 import DashboardApp from '../src/dashboard/App.svelte';
 import { stubAdminClient, makeTicket, makeMessage, makeApp, apiError } from './helpers.js';
 
@@ -688,6 +689,75 @@ describe('Settings', () => {
   });
 });
 
+describe('BuildInfo', () => {
+  const FULL = '212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa';
+
+  it('shows the short commit with the full SHA available to inspect', async () => {
+    const client = stubAdminClient();
+    render(BuildInfo, { props: { client, lang: 'en' } });
+
+    const commit = await screen.findByText('212b000');
+    expect(client.getVersion).toHaveBeenCalled();
+    expect(commit).toHaveAttribute('title', FULL);
+    expect(screen.getByText(/Commit/)).toBeInTheDocument();
+  });
+
+  it('copies the full SHA, not the shortened one', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    render(BuildInfo, { props: { client: stubAdminClient(), lang: 'en' } });
+    await screen.findByText('212b000');
+
+    await userEvent.click(screen.getByRole('button', { name: /Copy commit/ }));
+
+    expect(writeText).toHaveBeenCalledWith(FULL);
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it('stays quiet when the clipboard is blocked', async () => {
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    });
+    render(BuildInfo, { props: { client: stubAdminClient(), lang: 'en' } });
+    await screen.findByText('212b000');
+
+    await userEvent.click(screen.getByRole('button', { name: /Copy commit/ }));
+
+    expect(screen.queryByText('Copied')).not.toBeInTheDocument();
+    expect(screen.getByText('212b000')).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it('says unknown when the build carries no commit, and offers nothing to copy', async () => {
+    const client = stubAdminClient({
+      getVersion: vi.fn().mockResolvedValue({ commit: 'unknown', short: 'unknown', known: false }),
+    });
+    render(BuildInfo, { props: { client, lang: 'en' } });
+
+    expect(await screen.findByText('unknown')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Copy commit/ })).not.toBeInTheDocument();
+  });
+
+  it('renders nothing rather than an error when the endpoint fails', async () => {
+    const client = stubAdminClient({
+      getVersion: vi.fn().mockRejectedValue(apiError('error.generic', 500)),
+    });
+    const { container } = render(BuildInfo, { props: { client, lang: 'en' } });
+
+    await waitFor(() => expect(client.getVersion).toHaveBeenCalled());
+    await waitFor(() => expect(container.querySelector('.build')).toBeNull());
+  });
+
+  it('renders in German', async () => {
+    render(BuildInfo, { props: { client: stubAdminClient(), lang: 'de' } });
+
+    expect(await screen.findByText(/Commit/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /kopieren/i })).toBeInTheDocument();
+  });
+});
+
 describe('dashboard App', () => {
   it('asks for the admin key first', () => {
     render(DashboardApp, { props: { lang: 'en', clientFactory: vi.fn() } });
@@ -806,6 +876,31 @@ describe('dashboard App', () => {
 
     expect(await screen.findByLabelText('Admin key')).toBeInTheDocument();
     removeItem.mockRestore();
+  });
+
+  it('shows the deployed commit once signed in, and never before', async () => {
+    const client = stubAdminClient();
+    const clientFactory = vi.fn().mockReturnValue(client);
+    render(DashboardApp, { props: { lang: 'en', clientFactory } });
+
+    // The sign-in screen has no client, so nothing is fetched and nothing shown.
+    expect(screen.queryByText('212b000')).not.toBeInTheDocument();
+    expect(client.getVersion).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText('Admin key'), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByText('212b000')).toBeInTheDocument();
+  });
+
+  it('keeps the commit visible across views', async () => {
+    render(DashboardApp, { props: { client: stubAdminClient(), lang: 'en' } });
+    expect(await screen.findByText('212b000')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByText('212b000')).toBeInTheDocument();
   });
 
   it('marks the current section in the navigation', async () => {

@@ -22,6 +22,7 @@
   import TicketDetail from './TicketDetail.svelte';
   import Settings from './Settings.svelte';
   import Help from './Help.svelte';
+  import BuildInfo from './BuildInfo.svelte';
 
   const KEY_STORAGE = 'flagit.adminKey';
 
@@ -157,6 +158,8 @@
         <TicketList {client} {lang} onopen={(id) => (openTicketId = id)} />
       {/if}
     </main>
+
+    <BuildInfo {client} {lang} />
   </div>
 {/if}
 

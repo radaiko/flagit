@@ -181,6 +181,23 @@ describe('admin client', () => {
     expect(lastCall(fetchImpl).init.headers['X-Admin-Key']).toBe('admin-key');
   });
 
+  it('reads the deployed commit from the admin-only version endpoint', async () => {
+    const { fetchImpl, client } = build({
+      body: { data: { commit: '212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa', short: '212b000', known: true } },
+    });
+
+    const build_ = await client.getVersion();
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe('/internal/version');
+    expect(init.headers['X-Admin-Key']).toBe('admin-key');
+    expect(build_).toEqual({
+      commit: '212b000f1e2d3c4b5a69788796a5b4c3d2e1f0aa',
+      short: '212b000',
+      known: true,
+    });
+  });
+
   it('builds a filter query from the filters that are set', async () => {
     const { fetchImpl, client } = build({ body: { data: [] } });
 

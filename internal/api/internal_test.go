@@ -42,6 +42,7 @@ func TestInternalRoutesRequireAdminKey(t *testing.T) {
 		{http.MethodPatch, "/internal/apps/notes"},
 		{http.MethodGet, "/internal/settings"},
 		{http.MethodPatch, "/internal/settings"},
+		{http.MethodGet, "/internal/version"},
 	}
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {

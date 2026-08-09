@@ -32,7 +32,15 @@ COPY internal/ ./internal/
 RUN rm -rf ./internal/overlay/dist && mkdir -p ./internal/overlay/dist
 COPY --from=web /build/web/dist/ ./internal/overlay/dist/
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /flagit ./cmd/flagit
+# Revision baked into the binary, shown in the admin dashboard. Only a fallback:
+# the deployment normally supplies it at runtime via FLAGIT_COMMIT, which costs
+# no build cache. Declared last so passing it does not invalidate the layers
+# above. Unset, the dashboard reports "unknown".
+ARG GIT_COMMIT=""
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w -X flagit/internal/version.Commit=${GIT_COMMIT}" \
+    -o /flagit ./cmd/flagit
 
 # ----------------------------------------------------------------- runtime --
 FROM alpine:3.19
