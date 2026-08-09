@@ -43,6 +43,7 @@ flagit/
 │   │   └── lib/               # Shared components
 │   └── tests/                 # Vitest tests
 ├── deploy/tailscale/          # serve.json for the admin-dashboard sidecar
+├── scripts/resolve-commit.sh  # build-time revision resolver (see Deployment)
 ├── Dockerfile
 ├── docker-compose.yml         # Coolify deployment: no host ports published
 ├── docker-compose.local.yml   # opt-in overlay, publishes both ports on loopback
@@ -55,11 +56,20 @@ flagit/
 - Admin dashboard (3000) is reachable only through the Tailscale sidecar `flagit-admin`; it never gets a public domain
 - Required secrets, set in Coolify and never in the repo: `FLAGIT_ADMIN_KEY`, `TS_AUTHKEY`
 - SQLite persists on the `flagit_data` volume at `/data`; tailnet identity on `tailscale_state`
-- Deployed revision: compose maps Coolify's `SOURCE_COMMIT` onto `FLAGIT_COMMIT` at runtime — no
-  Coolify setting needed. Runtime, not a build arg: Coolify keeps `SOURCE_COMMIT` out of builds by
-  default, and Compose build packs pass build vars via `--env-file`. `Dockerfile`'s `ARG GIT_COMMIT`
-  (→ `-X flagit/internal/version.Commit`) is the fallback for `make build`/`make docker`; runtime
-  wins, then the build value, then `unknown`
+- Deployed revision (provenance chain, first hit wins):
+  1. runtime `FLAGIT_COMMIT`, then runtime `SOURCE_COMMIT` — both read by the app itself, so a
+     platform that injects either into the container is enough
+  2. the SHA baked into the binary at build time (`-X flagit/internal/version.Commit`), resolved by
+     `scripts/resolve-commit.sh` in the Dockerfile's `commit` stage from, in order: `--build-arg
+     GIT_COMMIT`, `--build-arg SOURCE_COMMIT`, then `.git/HEAD` (+ `refs`/`packed-refs`) in the
+     build context
+  3. `unknown`
+  The `.git` fallback is the one that needs no configuration anywhere and is what actually fixes
+  Coolify: raw Compose does **not** reliably interpolate `SOURCE_COMMIT`, so relying on
+  `FLAGIT_COMMIT: ${SOURCE_COMMIT}` alone produced `unknown` in production. `.dockerignore` exempts
+  only `HEAD`, `refs/` and `packed-refs` — no history enters the build context. The resolved SHA
+  reaches the Go build as a file (`COPY --from=commit /commit`), so an unchanged commit still hits
+  the build cache and only a hex object name can ever land in `-ldflags`
 
 ## Key Features
 - Ticket creation (bug/feature) with unique ID (e.g. FLG-7X3K9Q)

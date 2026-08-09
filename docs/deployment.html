@@ -141,11 +141,12 @@
             </tr>
             <tr>
               <td><code>--commit</code></td>
-              <td><code>FLAGIT_COMMIT</code></td>
+              <td><code>FLAGIT_COMMIT</code>, else <code>SOURCE_COMMIT</code></td>
               <td>build value, else <code>unknown</code></td>
               <td>
-                Git revision this deployment was built from, shown in the admin dashboard footer.
-                Falls back to the SHA stamped in at build time, then to <code>unknown</code>.
+                Git revision this deployment is running, shown in the admin dashboard footer. Falls
+                back to the SHA stamped into the image at build time, then to <code>unknown</code>.
+                See <a href="#provenance">where the deployed commit comes from</a>.
               </td>
             </tr>
             <tr>
@@ -332,12 +333,14 @@ volumes:
           sidecar waits for it before starting.
         </li>
         <li>
-          <strong>The deployed commit needs no configuration.</strong> Coolify sets
-          <code>SOURCE_COMMIT</code> to the revision it just deployed, and the compose file maps it
-          onto <code>FLAGIT_COMMIT</code> for the container. The dashboard footer then shows the
-          short SHA, with the full one on hover and behind the copy button. There is nothing to add
-          to the environment list; if you ever want to pin it by hand, set
-          <code>FLAGIT_COMMIT</code> explicitly and it wins.
+          <strong>The deployed commit needs no configuration.</strong> The image works out its own
+          revision at build time and bakes it in, so the dashboard footer shows the short SHA — with
+          the full one on hover and behind the copy button — with nothing added to the environment
+          list. Do not rely on <code>SOURCE_COMMIT</code> alone: Coolify does not reliably hand it to
+          a <em>raw Docker Compose</em> deployment, and a compose file that only maps
+          <code>FLAGIT_COMMIT: ${SOURCE_COMMIT}</code> reports <code>unknown</code> when it is
+          missing. See <a href="#provenance">how the commit is resolved</a>. To pin the value by
+          hand, set <code>FLAGIT_COMMIT</code> explicitly and it wins over everything else.
         </li>
         <li>
           <strong>Deploy</strong>, then check both services: <code>curl</code> the public health
@@ -353,21 +356,84 @@ open https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/admin
 
 # Which commit is actually running? The dashboard footer answers this, and so
 # does the endpoint behind it. Admin key required; it is not on the public API.
+# Read the key into the shell without echoing it, and never paste it inline.
+read -rs FLAGIT_ADMIN_KEY          # prompt stays silent; nothing lands in the history
 curl -s -H "X-Admin-Key: $FLAGIT_ADMIN_KEY" \
   https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/version
 {"data":{"commit":"212b000f1e…","short":"212b000","known":true}}</code></pre>
 
+      <h3 id="provenance">Where the deployed commit comes from</h3>
+      <p>
+        Flagit reports the first of these it can find, so a deployment names its revision without
+        anything being configured by hand:
+      </p>
+      <ol>
+        <li>
+          <code>FLAGIT_COMMIT</code> in the container environment — an explicit pin, and it wins over
+          everything below.
+        </li>
+        <li>
+          <code>SOURCE_COMMIT</code> in the container environment. The compose file already maps it
+          onto <code>FLAGIT_COMMIT</code>, and the binary also reads it directly, so either path
+          works.
+        </li>
+        <li>
+          the SHA baked into the binary at build time, resolved inside the image build by
+          <code>scripts/resolve-commit.sh</code>: a <code>GIT_COMMIT</code> build argument (what
+          <code>make docker</code> passes), else a <code>SOURCE_COMMIT</code> build argument, else
+          <strong>the revision read straight out of <code>.git</code> in the build context</strong>.
+        </li>
+        <li><code>unknown</code> — nothing above was available, and saying so is the honest answer.</li>
+      </ol>
+
       <div class="note">
-        <strong>Why runtime and not a build argument.</strong> Coolify deliberately keeps
-        <code>SOURCE_COMMIT</code> out of Docker builds so the build cache survives a commit that
-        changed nothing relevant; including it is an opt-in
-        (<em>Include Source Commit in Build</em>, in the application's General settings), and for the
-        Docker Compose build pack build variables are passed by <code>--env-file</code> rather than
-        as <code>--build-arg</code>. Taking the value at runtime sidesteps both: every deploy reports
-        its revision, and no build is invalidated. The <code>GIT_COMMIT</code> build argument in the
-        <code>Dockerfile</code> remains for <code>make docker</code> and other builders, and is only
-        a fallback — the runtime value wins.
+        <strong><code>SOURCE_COMMIT</code> may never reach you.</strong> Coolify keeps it out of
+        Docker builds by default (<em>Include Source Commit in Build</em> is opt-in, and the Compose
+        build pack passes build variables via <code>--env-file</code> rather than
+        <code>--build-arg</code>), and for a <em>raw Docker Compose</em> deployment it is not
+        reliably placed where compose interpolates <code>${SOURCE_COMMIT}</code> either — which is
+        exactly how this deployment ended up reporting <code>unknown</code>. The
+        <code>.git</code> fallback is therefore the mechanism that actually carries the revision:
+        the build is run against the checkout Coolify just made, and the image reads
+        <code>HEAD</code> from it. Those three files — <code>HEAD</code>, <code>refs/</code>,
+        <code>packed-refs</code> — are the only part of <code>.git</code> exempted from
+        <code>.dockerignore</code>; no history enters the build context, and only a hex object name
+        can ever be substituted into the linker flags. The resolved value crosses into the Go build
+        as a file, so rebuilding the same commit still hits the build cache.
       </div>
+
+      <div class="note">
+        <strong>Verifying it after a Coolify deploy.</strong> The dashboard footer is the quick
+        answer; <code>/internal/version</code> is the exact one. It is admin-only and internal-only:
+        the public API returns <code>404</code> for it, and port <code>3000</code> without the key
+        returns <code>401</code>.
+      </div>
+
+      <pre><code># From a device on the tailnet — key read silently, never echoed or pasted inline.
+read -rs FLAGIT_ADMIN_KEY
+curl -s -H "X-Admin-Key: $FLAGIT_ADMIN_KEY" \
+  https://flagit-admin.&lt;tailnet&gt;.ts.net/internal/version
+{"data":{"commit":"f9372a65…","short":"f9372a6","known":true}}
+
+# Compare with what you deployed. Equal means the running image is that commit.
+git rev-parse HEAD
+
+# On the VM, without handling the key at all: the container already has it in
+# its own environment, so nothing secret appears on the command line.
+docker exec &lt;flagit-container&gt; sh -c \
+  'wget -qO- --header="X-Admin-Key: $FLAGIT_ADMIN_KEY" http://127.0.0.1:3000/internal/version'
+
+# The same endpoint on the public API must be 404 — check that too.
+curl -s -o /dev/null -w '%{http_code}\n' https://flagit.spitzbub.app/internal/version
+404</code></pre>
+
+      <p>
+        Still <code>unknown</code> after a redeploy? The build had neither build argument nor
+        <code>.git</code> in its context — a source that is not a git checkout, or a
+        <code>.dockerignore</code> that excludes <code>.git</code> without the exemptions. Set
+        <code>FLAGIT_COMMIT</code> in Coolify's environment as the manual way out; it takes effect on
+        restart, with no rebuild.
+      </p>
 
       <div class="note note-danger">
         <strong>Do not publish ports from this compose file.</strong> Adding a

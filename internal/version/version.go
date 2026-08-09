@@ -2,16 +2,20 @@
 //
 // The value comes from one of two places, in this order:
 //
-//   - a runtime override, which is how a deployment supplies it: Coolify
-//     exposes the deployed revision as SOURCE_COMMIT, and docker-compose.yml
-//     maps that onto FLAGIT_COMMIT for the container.
+//   - a runtime override, which is how a deployment pins it: FLAGIT_COMMIT, or
+//     SOURCE_COMMIT as the platform's own name for the same thing. Both are
+//     read in cmd/flagit.
 //   - a build-time default, stamped in by the linker with
-//     -ldflags "-X flagit/internal/version.Commit=<sha>", which is what
-//     `make build` and a plain `docker build --build-arg GIT_COMMIT=…` do.
+//     -ldflags "-X flagit/internal/version.Commit=<sha>". `make build` passes
+//     the checkout's HEAD; the image gets it from scripts/resolve-commit.sh,
+//     which prefers a GIT_COMMIT or SOURCE_COMMIT build argument and otherwise
+//     reads the revision out of the .git metadata in the build context. That
+//     last route is the one that needs nothing configured on the platform.
 //
-// Neither is guaranteed — a bare `go build` has no commit to offer — so the
-// last resort is the explicit sentinel Unknown rather than an empty string
-// that would render as a blank space in the dashboard.
+// Neither is guaranteed — a bare `go build` has no commit to offer, and so has
+// an image built from a context with no git metadata — so the last resort is
+// the explicit sentinel Unknown rather than an empty string that would render
+// as a blank space in the dashboard.
 package version
 
 import "strings"

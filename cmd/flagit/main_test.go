@@ -84,6 +84,41 @@ func TestParseFlagsReadsEnvironment(t *testing.T) {
 		"Coolify exposes the deployed revision as SOURCE_COMMIT, mapped to FLAGIT_COMMIT in compose")
 }
 
+func TestParseFlagsAcceptsSourceCommitAsTheRevision(t *testing.T) {
+	// Coolify names the deployed revision SOURCE_COMMIT. Compose maps it onto
+	// FLAGIT_COMMIT, but that mapping only works when Coolify puts the variable
+	// where compose interpolates it — which raw Docker Compose deployments do
+	// not guarantee. Reading it directly costs nothing and covers that gap.
+	t.Setenv("SOURCE_COMMIT", "aaaaaaabbbbbbbcccccccddddddd0000000eeeee")
+
+	cfg, err := parseFlags(nil, io.Discard)
+
+	require.NoError(t, err)
+	assert.Equal(t, "aaaaaaabbbbbbbcccccccddddddd0000000eeeee", cfg.commit)
+}
+
+func TestFlagitCommitBeatsSourceCommit(t *testing.T) {
+	// An operator who pins FLAGIT_COMMIT by hand has said the last word.
+	t.Setenv("FLAGIT_COMMIT", "1111111111111111111111111111111111111111")
+	t.Setenv("SOURCE_COMMIT", "2222222222222222222222222222222222222222")
+
+	cfg, err := parseFlags(nil, io.Discard)
+
+	require.NoError(t, err)
+	assert.Equal(t, "1111111111111111111111111111111111111111", cfg.commit)
+}
+
+func TestParseFlagsIgnoresABlankSourceCommit(t *testing.T) {
+	// An unset compose variable arrives as an empty string, not as an absent one.
+	t.Setenv("FLAGIT_COMMIT", "")
+	t.Setenv("SOURCE_COMMIT", "   ")
+
+	cfg, err := parseFlags(nil, io.Discard)
+
+	require.NoError(t, err)
+	assert.Empty(t, cfg.commit, "the build-time value must still get its turn")
+}
+
 func TestFlagsBeatEnvironment(t *testing.T) {
 	t.Setenv("FLAGIT_PORT", "7070")
 

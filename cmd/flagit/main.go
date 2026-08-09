@@ -73,7 +73,10 @@ func parseFlags(args []string, out io.Writer) (*config, error) {
 	fs.BoolVar(&cfg.dev, "dev", envBool("FLAGIT_DEV", false), "dev mode: proxy the frontend to the Vite dev server instead of serving embedded files")
 	fs.StringVar(&cfg.viteURL, "vite-url", env("FLAGIT_VITE_URL", overlay.DefaultViteURL), "Vite dev server URL, used with -dev")
 	fs.StringVar(&cfg.logLevel, "log-level", env("FLAGIT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
-	fs.StringVar(&cfg.commit, "commit", env("FLAGIT_COMMIT", ""), "git revision this deployment was built from, shown in the admin dashboard (env FLAGIT_COMMIT; Coolify exposes it as SOURCE_COMMIT)")
+	// SOURCE_COMMIT is read directly, not only through the FLAGIT_COMMIT mapping
+	// in docker-compose.yml: a platform that injects it into the container but
+	// not into compose's interpolation environment would otherwise go unnoticed.
+	fs.StringVar(&cfg.commit, "commit", env("FLAGIT_COMMIT", env("SOURCE_COMMIT", "")), "git revision this deployment was built from, shown in the admin dashboard (env FLAGIT_COMMIT, else SOURCE_COMMIT; falls back to the revision stamped in at build time)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(out, "flagit — self-hosted in-app ticket system")

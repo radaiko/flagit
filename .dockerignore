@@ -1,7 +1,15 @@
 # Everything the image builds for itself, plus anything that would bust the
 # build cache or leak local state into the image.
 
+# The history stays out, but the three files that name the checked-out revision
+# come in: the provenance stage in the Dockerfile reads them when no commit was
+# passed as a build argument, which is how a Coolify deployment gets its SHA.
 .git
+!.git/HEAD
+!.git/packed-refs
+!.git/refs
+!.git/refs/**
+
 .gitignore
 .github
 

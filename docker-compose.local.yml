@@ -11,6 +11,11 @@
 #
 # Both bindings are pinned to 127.0.0.1: nothing here is safe to expose, and on
 # a server the Tailscale sidecar is the supported path to port 3000.
+#
+# Nothing here needs SOURCE_COMMIT or FLAGIT_COMMIT: built inside the checkout,
+# the image reads its own revision from .git. Build the same tree from somewhere
+# without git metadata and the dashboard says "unknown" — that is the honest
+# answer, not a misconfiguration.
 services:
   flagit:
     ports:
