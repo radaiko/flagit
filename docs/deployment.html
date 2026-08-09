@@ -435,6 +435,92 @@ curl -s -o /dev/null -w '%{http_code}\n' https://flagit.spitzbub.app/internal/ve
         restart, with no rebuild.
       </p>
 
+      <h3 id="relay">The signed relay: stamping the commit on a raw Compose deploy</h3>
+      <p>
+        Setting <code>FLAGIT_COMMIT</code> by hand works, but it is a value someone has to remember
+        to update, and a stale pin is worse than <code>unknown</code> — it names a commit that is not
+        running. Where the <code>.git</code> fallback cannot apply either, because the platform builds
+        from a source with no git metadata, the automated way out is a <em>signed relay</em>: a small
+        webhook receiver that sits between GitHub and Coolify's deploy hook and writes the revision
+        into the deployment itself. This is the contract it has to honour.
+      </p>
+      <ol>
+        <li>
+          <strong>It reads the <code>after</code> SHA from a verified GitHub push.</strong> The push
+          event names the new head of the pushed ref in <code>after</code>; that, not
+          <code>before</code> and not the tip of some later local checkout, is the commit about to be
+          deployed. <em>Signed</em> is the load-bearing word: the relay verifies GitHub's
+          <code>X-Hub-Signature-256</code> HMAC over the raw body before it reads a single field, so
+          the SHA it stamps came from the repository and not from anyone who found the URL.
+        </li>
+        <li>
+          <strong>It validates a 40-hex SHA.</strong> The value is about to become a container
+          environment variable that the dashboard presents as provenance, so only a full lowercase
+          40-character hex object name is accepted. An abbreviated SHA, a ref name such as
+          <code>refs/heads/main</code>, an uninterpolated <code>${SOURCE_COMMIT}</code>, anything
+          carrying a newline or a quote, and the all-zero SHA that a branch <em>deletion</em> reports
+          as <code>after</code> are all refused.
+        </li>
+        <li>
+          <strong>It writes only <code>FLAGIT_COMMIT</code>, only under the <code>flagit</code>
+          service, only in the generated Compose file, and only before the restart.</strong> One key,
+          one service, one line — inserted into the service's <code>environment:</code> mapping, or
+          replacing the entry already there. It does not round-trip the YAML, add
+          <code>ports:</code>, touch the <code>tailscale-admin</code> sidecar or its
+          <code>TS_AUTHKEY</code>, rename a volume, or reformat anything Coolify wrote. Then it
+          triggers the deploy, so the container starts with the value already in its environment.
+        </li>
+        <li>
+          <strong>It fails closed.</strong> A SHA that does not validate, or a Compose file it cannot
+          read with confidence — no <code>services:</code> block, no <code>flagit</code> service, an
+          <code>environment:</code> written as a list, a <code>FLAGIT_COMMIT</code> that already
+          appears twice — aborts the whole thing. Nothing is written, no deploy is triggered, and the
+          previous deployment keeps running and keeps reporting its own commit truthfully. A
+          half-applied edit to the file that defines the exposure boundary is the one outcome worth
+          avoiding at any cost; reporting <code>unknown</code> is not.
+        </li>
+      </ol>
+
+      <div class="note">
+        <strong><code>/internal/version</code> is the verification endpoint.</strong> The relay's job
+        is done when the running container agrees with the commit that was pushed, and that is the
+        only place to confirm it — the dashboard footer renders the same value for a glance. It stays
+        admin-key-only and internal-only: the public API answers <code>404</code>, and port
+        <code>3000</code> without the key answers <code>401</code>. A relay is not a reason to expose
+        it. If the answer is still <code>unknown</code> after a push, the relay failed closed
+        somewhere, and its own log — not the deployment — is where to look.
+      </div>
+
+      <p>
+        The stamping semantics are pinned by an executable test that needs nothing but a Python
+        interpreter. It builds a production-like Compose fixture in a temporary directory with no
+        <code>.git</code> anywhere, so the relay's SHA is the only possible source of the answer, and
+        asserts the whole contract: rejection of every malformed SHA and Compose shape, exactly one
+        line changed, idempotence under a repeated stamp, replacement rather than accumulation under
+        a new one, the sidecar and volumes and port declarations left untouched, and that the
+        resolved version is the pushed SHA rather than <code>unknown</code>.
+      </p>
+
+      <pre><code>./scripts/test-relay-commit-stamp.py
+PASS  fixture has no .git anywhere, so the image could only report unknown
+PASS  without the relay the deployment resolves to unknown
+…
+PASS  no ports: entry is introduced — the exposure boundary is unchanged
+PASS  version resolution returns the relay's SHA, not unknown
+
+41/41 checks passed
+Coolify raw-Compose webhook provenance contract holds.</code></pre>
+
+      <div class="note note-danger">
+        <strong>A relay is a deploy trigger with a write into your Compose file.</strong> Treat it as
+        infrastructure, not a script: reject unsigned or replayed deliveries, ignore pushes to any
+        ref but the deploy branch, and keep the webhook secret and the Coolify deploy token out of
+        the repository — the same rule that already applies to <code>FLAGIT_ADMIN_KEY</code> and
+        <code>TS_AUTHKEY</code>. Nothing in this repository holds those values. If you would not give
+        the relay commit access, do not give it the ability to rewrite the file that decides which
+        ports are published.
+      </div>
+
       <div class="note note-danger">
         <strong>Do not publish ports from this compose file.</strong> Adding a
         <code>ports:</code> entry — for either service — binds it on the VM's public interface and
