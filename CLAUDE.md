@@ -81,5 +81,6 @@ flagit/
 - Global auto-process toggle for new unknown apps (default: off)
 - Mass operations (bulk status update e.g. mark shipped in version X)
 - Commit history (dev-only, admin dashboard only)
-- Deployed commit in the dashboard footer (short SHA, full SHA on hover + copy), served by
-  `GET /internal/version` behind the admin key — never on the public API
+- Deployed commit as a status chip in the dashboard header bar (short SHA, full SHA on hover +
+  copy), served by `GET /internal/version` behind the admin key — never on the public API. It sits
+  in the header, not a page footer: a footer below a long ticket list is never scrolled to

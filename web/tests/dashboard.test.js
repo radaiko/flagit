@@ -759,6 +759,10 @@ describe('BuildInfo', () => {
 });
 
 describe('dashboard App', () => {
+  // The tickets view has a header of its own, so the `banner` role alone is
+  // ambiguous. The shell bar is the one carrying the navigation landmark.
+  const shellBar = () => screen.getByRole('navigation').closest('header');
+
   it('asks for the admin key first', () => {
     render(DashboardApp, { props: { lang: 'en', clientFactory: vi.fn() } });
 
@@ -893,6 +897,20 @@ describe('dashboard App', () => {
     expect(await screen.findByText('212b000')).toBeInTheDocument();
   });
 
+  // The deployed dashboard once rendered this as a page footer below a long
+  // ticket list, where nobody ever scrolled to it. It belongs in the header
+  // bar, on every view, without scrolling.
+  it('shows the commit in the header bar rather than a footer below the fold', async () => {
+    const { container } = render(DashboardApp, { props: { client: stubAdminClient(), lang: 'en' } });
+
+    const bar = shellBar();
+    expect(bar).toHaveClass('bar');
+    expect(await within(bar).findByText('212b000')).toBeInTheDocument();
+    expect(within(bar).getByText('Commit')).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: /Copy commit/ })).toBeInTheDocument();
+    expect(container.querySelector('footer')).toBeNull();
+  });
+
   it('keeps the commit visible across views', async () => {
     render(DashboardApp, { props: { client: stubAdminClient(), lang: 'en' } });
     expect(await screen.findByText('212b000')).toBeInTheDocument();
@@ -900,7 +918,7 @@ describe('dashboard App', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
 
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
-    expect(screen.getByText('212b000')).toBeInTheDocument();
+    expect(within(shellBar()).getByText('212b000')).toBeInTheDocument();
   });
 
   it('marks the current section in the navigation', async () => {

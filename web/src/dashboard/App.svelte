@@ -136,7 +136,8 @@
         </button>
       </nav>
 
-      <div class="row">
+      <div class="row status">
+        <BuildInfo {client} {lang} />
         <LanguageToggle {lang} onchange={setLanguage} />
         <button type="button" class="btn-quiet" onclick={signOut}>{t('admin.signOut', lang)}</button>
       </div>
@@ -158,8 +159,6 @@
         <TicketList {client} {lang} onopen={(id) => (openTicketId = id)} />
       {/if}
     </main>
-
-    <BuildInfo {client} {lang} />
   </div>
 {/if}
 
@@ -203,5 +202,14 @@
     color: var(--ink);
     font-weight: 600;
     border-bottom-color: var(--marker);
+  }
+
+  /* The build chip, the language toggle and sign-out are one right-hand group.
+     The bar wraps rather than overlaps, so on a narrow screen this group drops
+     to its own line instead of sitting on top of the navigation. */
+  .status {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-3);
   }
 </style>
