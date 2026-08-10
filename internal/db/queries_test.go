@@ -175,6 +175,44 @@ func TestListTicketsFilters(t *testing.T) {
 	}
 }
 
+// A declined ticket has to survive the round trip through SQLite as itself:
+// stored, read back, and found by the status filter without ever being folded
+// into closed.
+func TestDeclinedTicketRoundTripsAndFilters(t *testing.T) {
+	d := newTestDB(t)
+
+	// The column takes any text, so state the contract the storage layer is
+	// standing behind: declined is a status the model recognises, and what is
+	// written under that name comes back under it.
+	require.True(t, model.StatusDeclined.Valid(), "declined must be a known status")
+
+	declined := newTicket("notes")
+	require.NoError(t, d.CreateTicket(declined))
+	require.NoError(t, d.UpdateTicketStatus(declined.ID, model.StatusDeclined, ""))
+
+	closed := newTicket("notes")
+	require.NoError(t, d.CreateTicket(closed))
+	require.NoError(t, d.UpdateTicketStatus(closed.ID, model.StatusClosed, ""))
+
+	got, err := d.GetTicket(declined.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusDeclined, got.Status)
+
+	byDeclined, err := d.ListTickets(TicketFilter{Status: model.StatusDeclined})
+	require.NoError(t, err)
+	require.Len(t, byDeclined, 1)
+	assert.Equal(t, declined.ID, byDeclined[0].ID)
+
+	byClosed, err := d.ListTickets(TicketFilter{Status: model.StatusClosed})
+	require.NoError(t, err)
+	require.Len(t, byClosed, 1)
+	assert.Equal(t, closed.ID, byClosed[0].ID)
+
+	n, err := d.CountTickets(TicketFilter{Status: model.StatusDeclined})
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}
+
 func TestListTicketsNewestFirst(t *testing.T) {
 	d := newTestDB(t)
 

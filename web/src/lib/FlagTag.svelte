@@ -47,6 +47,9 @@
   .tag[data-status='closed'] {
     --status-color: var(--status-closed);
   }
+  .tag[data-status='declined'] {
+    --status-color: var(--status-declined);
+  }
 
   .bar {
     width: 0.4em;

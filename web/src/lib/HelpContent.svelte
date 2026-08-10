@@ -8,8 +8,9 @@
    * every key that either of them will ask for.
    */
 
-  /** Every status, in lifecycle order — the same order the backend documents. */
-  const STATUSES = ['open', 'in-progress', 'resolved', 'shipped', 'closed'];
+  // Every status, in the one order the backend documents — imported rather
+  // than restated, so the glossary cannot fall behind the workflow.
+  import { STATUSES } from './format.js';
 
   /** The status glossary, shown wherever the workflow is being explained. */
   const STATUS_TERMS = STATUSES.map((status) => ({

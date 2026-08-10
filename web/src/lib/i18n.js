@@ -78,6 +78,7 @@ export const translations = {
     'status.resolved': 'Resolved',
     'status.shipped': 'Shipped',
     'status.closed': 'Closed',
+    'status.declined': 'Declined',
     'status.label': 'Status',
 
     // Types
@@ -199,6 +200,8 @@ export const translations = {
     'help.status.resolved': 'Fixed in the code, not yet in a release you can install.',
     'help.status.shipped': 'The fix is out. The version it went into is shown on the ticket.',
     'help.status.closed': 'No further work planned. A reply can still restart the conversation.',
+    'help.status.declined':
+      'Looked at and turned down — this one is not going to be built. A reply can still make the case for it.',
 
     // Help — overlay
     'help.overlay.report.title': 'Filing a report',
@@ -227,14 +230,14 @@ export const translations = {
 
     'help.overlay.status.title': 'What the statuses mean',
     'help.overlay.status.body1':
-      'A ticket carries one of five statuses. It is shown next to the ID every time you open it.',
+      'A ticket carries one of six statuses. It is shown next to the ID every time you open it.',
 
     // Help — dashboard
     'help.admin.workflow.title': 'Status workflow',
     'help.admin.workflow.body1':
-      'The documented path is open → in progress → resolved → shipped → closed. A ticket can also jump straight to closed from any stage, or step back one stage when work reopens or a release is rolled back.',
+      'The documented path is open → in progress → resolved → shipped → closed. A ticket can also jump straight to closed from any stage, or step back one stage when work reopens or a release is rolled back. Declined sits off that path: an open or in-progress ticket can be turned down, and a declined one reconsidered or filed away as closed.',
     'help.admin.workflow.body2':
-      'Anything else is rejected as a slip. When you genuinely mean it, the mass update forces the change through; over the API the same call takes "force": true.',
+      'Anything else is rejected as a slip — declining work that is already resolved or shipped included. When you genuinely mean it, the mass update forces the change through; over the API the same call takes "force": true.',
 
     'help.admin.apps.title': 'Per-app settings',
     'help.admin.apps.body1':
@@ -333,6 +336,7 @@ export const translations = {
     'status.resolved': 'Behoben',
     'status.shipped': 'Ausgeliefert',
     'status.closed': 'Geschlossen',
+    'status.declined': 'Abgelehnt',
     'status.label': 'Status',
 
     // Types
@@ -454,6 +458,8 @@ export const translations = {
     'help.status.shipped': 'Die Behebung ist draußen. Am Ticket steht, in welcher Version.',
     'help.status.closed':
       'Es ist keine weitere Arbeit geplant. Eine Antwort kann das Gespräch wieder in Gang bringen.',
+    'help.status.declined':
+      'Angesehen und abgelehnt — das wird so nicht umgesetzt. Eine Antwort kann trotzdem noch dafür argumentieren.',
 
     // Hilfe — Overlay
     'help.overlay.report.title': 'Eine Meldung schreiben',
@@ -482,14 +488,14 @@ export const translations = {
 
     'help.overlay.status.title': 'Was die Status bedeuten',
     'help.overlay.status.body1':
-      'Ein Ticket hat immer einen von fünf Status. Er steht bei jedem Öffnen direkt neben der ID.',
+      'Ein Ticket hat immer einen von sechs Status. Er steht bei jedem Öffnen direkt neben der ID.',
 
     // Hilfe — Verwaltung
     'help.admin.workflow.title': 'Der Statusablauf',
     'help.admin.workflow.body1':
-      'Der dokumentierte Weg ist offen → in Arbeit → behoben → ausgeliefert → geschlossen. Ein Ticket darf aus jeder Stufe direkt auf „geschlossen“ springen oder eine Stufe zurückgehen, wenn die Arbeit wieder aufgenommen oder ein Release zurückgerollt wird.',
+      'Der dokumentierte Weg ist offen → in Arbeit → behoben → ausgeliefert → geschlossen. Ein Ticket darf aus jeder Stufe direkt auf „geschlossen“ springen oder eine Stufe zurückgehen, wenn die Arbeit wieder aufgenommen oder ein Release zurückgerollt wird. „Abgelehnt“ liegt neben diesem Weg: Ein offenes oder in Arbeit befindliches Ticket kann abgelehnt werden, ein abgelehntes wieder aufgenommen oder als geschlossen abgelegt werden.',
     'help.admin.workflow.body2':
-      'Alles andere wird als Versehen abgelehnt. Wenn du es wirklich so meinst, erzwingt die Sammelbearbeitung die Änderung; über die API macht das "force": true im selben Aufruf.',
+      'Alles andere wird als Versehen abgelehnt — auch der Versuch, bereits behobene oder ausgelieferte Arbeit abzulehnen. Wenn du es wirklich so meinst, erzwingt die Sammelbearbeitung die Änderung; über die API macht das "force": true im selben Aufruf.',
 
     'help.admin.apps.title': 'Einstellungen je App',
     'help.admin.apps.body1':

@@ -155,6 +155,37 @@ describe('TicketList', () => {
     expect(screen.getByText('Beta')).toBeInTheDocument();
   });
 
+  // Triage is where declined earns its keep: an admin has to be able to pull
+  // up everything that was turned down without it hiding among the closed.
+  it('offers declined in the status filter and narrows to it', async () => {
+    const client = stubAdminClient({
+      listTickets: vi.fn().mockResolvedValue([
+        makeTicket({ id: 'FLG-AAAAAA', status: 'closed', title: 'Alpha' }),
+        makeTicket({ id: 'FLG-CCCCCC', status: 'declined', title: 'Gamma' }),
+      ]),
+    });
+    render(TicketList, { props: { client, lang: 'en' } });
+    await screen.findByText('Gamma');
+
+    const filter = screen.getByLabelText('Status');
+    expect(within(filter).getByRole('option', { name: 'Declined' })).toBeInTheDocument();
+
+    await userEvent.selectOptions(filter, 'declined');
+
+    expect(screen.getByText('Gamma')).toBeInTheDocument();
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  });
+
+  it('names a declined ticket in the table, in German too', async () => {
+    const client = stubAdminClient({
+      listTickets: vi.fn().mockResolvedValue([makeTicket({ status: 'declined' })]),
+    });
+    render(TicketList, { props: { client, lang: 'de' } });
+
+    await screen.findByText('Crash on save');
+    expect(within(screen.getByRole('table')).getByText('Abgelehnt')).toBeInTheDocument();
+  });
+
   it('opens a ticket when its tag is clicked', async () => {
     const onopen = vi.fn();
     render(TicketList, { props: { client: stubAdminClient(), lang: 'en', onopen } });
@@ -295,6 +326,25 @@ describe('MassOperations', () => {
     await userEvent.selectOptions(screen.getByLabelText('Set status to'), 'closed');
 
     expect(screen.queryByLabelText('Shipped in version')).not.toBeInTheDocument();
+  });
+
+  // Turning down a batch of requests in one sweep is the mirror image of
+  // shipping one, so the bulk control has to offer it.
+  it('can decline a whole selection at once', async () => {
+    const client = stubAdminClient();
+    render(MassOperations, { props: { client, selected, lang: 'en' } });
+
+    const select = screen.getByLabelText('Set status to');
+    expect(within(select).getByRole('option', { name: 'Declined' })).toBeInTheDocument();
+
+    await userEvent.selectOptions(select, 'declined');
+    expect(screen.queryByLabelText('Shipped in version')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() =>
+      expect(client.batchUpdate).toHaveBeenCalledWith(selected, 'declined', ''),
+    );
   });
 
   it('applies the update to every selected ticket', async () => {
@@ -455,6 +505,45 @@ describe('TicketDetail', () => {
       }),
     );
     expect(await screen.findByRole('status')).toHaveTextContent('Ticket updated');
+  });
+
+  it('declines a ticket with the reason typed alongside it', async () => {
+    const client = stubAdminClient({ getTicket: vi.fn().mockResolvedValue(fullTicket) });
+    render(TicketDetail, { props: { client, ticketId: 'FLG-7X3K9Q', lang: 'en' } });
+    await screen.findByRole('heading', { name: 'Crash on save' });
+
+    await userEvent.selectOptions(screen.getByLabelText('Set status'), 'declined');
+    await userEvent.type(screen.getByLabelText('Reply to reporter'), 'Out of scope for this app.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(client.updateTicket).toHaveBeenCalledWith('FLG-7X3K9Q', {
+        status: 'declined',
+        shippedVersion: '',
+        comment: 'Out of scope for this app.',
+      }),
+    );
+  });
+
+  // A ticket nobody is going to build has no release to name.
+  it('asks for no version when declining', async () => {
+    const client = stubAdminClient({ getTicket: vi.fn().mockResolvedValue(fullTicket) });
+    render(TicketDetail, { props: { client, ticketId: 'FLG-7X3K9Q', lang: 'en' } });
+    await screen.findByRole('heading', { name: 'Crash on save' });
+
+    await userEvent.selectOptions(screen.getByLabelText('Set status'), 'declined');
+
+    expect(screen.queryByLabelText('Shipped in version')).not.toBeInTheDocument();
+  });
+
+  it('shows a declined ticket as declined', async () => {
+    const client = stubAdminClient({
+      getTicket: vi.fn().mockResolvedValue(makeTicket({ status: 'declined' })),
+    });
+    render(TicketDetail, { props: { client, ticketId: 'FLG-7X3K9Q', lang: 'en' } });
+
+    await screen.findByRole('heading', { name: 'Crash on save' });
+    expect(screen.getByLabelText('Set status')).toHaveValue('declined');
   });
 
   it('asks for a version when shipping', async () => {

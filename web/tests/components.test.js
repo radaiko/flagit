@@ -55,6 +55,7 @@ describe('StatusLabel', () => {
     ['resolved', 'Resolved', 'Behoben'],
     ['shipped', 'Shipped', 'Ausgeliefert'],
     ['closed', 'Closed', 'Geschlossen'],
+    ['declined', 'Declined', 'Abgelehnt'],
   ])('renders %s in both languages', (status, english, german) => {
     const { unmount } = render(StatusLabel, { props: { status, lang: 'en' } });
     expect(screen.getByText(english)).toBeInTheDocument();
@@ -68,6 +69,14 @@ describe('StatusLabel', () => {
     const { container } = render(StatusLabel, { props: { status: 'resolved' } });
 
     expect(container.querySelector('.status')).toHaveAttribute('data-status', 'resolved');
+  });
+
+  // Declined reads as a decision, not as another shade of closed, so it gets
+  // its own hook for the colour dot rather than borrowing one.
+  it('gives declined its own styling hook', () => {
+    const { container } = render(StatusLabel, { props: { status: 'declined' } });
+
+    expect(container.querySelector('.status')).toHaveAttribute('data-status', 'declined');
   });
 });
 

@@ -60,7 +60,7 @@ describe('HelpContent', () => {
     const statusTopic = OVERLAY_TOPICS.find((topic) => topic.terms);
     render(HelpContent, { props: { topics: [statusTopic], lang: 'en' } });
 
-    for (const status of ['Open', 'In progress', 'Resolved', 'Shipped', 'Closed']) {
+    for (const status of ['Open', 'In progress', 'Resolved', 'Shipped', 'Closed', 'Declined']) {
       expect(screen.getByText(status)).toBeInTheDocument();
     }
     expect(screen.getByText(/not yet in a release you can install/)).toBeInTheDocument();

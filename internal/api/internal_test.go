@@ -350,6 +350,50 @@ func TestUpdateTicketShippedVersion(t *testing.T) {
 	assert.Equal(t, "1.5.0", got.ShippedVersion)
 }
 
+// "declined" has to survive the whole loop: accepted as JSON, stored, and read
+// back as itself by the list, the filter and the ticket endpoint.
+func TestUpdateTicketToDeclinedRoundTrips(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
+		map[string]any{"status": "declined", "comment": "Out of scope for this app."},
+		adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var got model.Ticket
+	decodeData(t, rec, &got)
+	assert.Equal(t, model.StatusDeclined, got.Status)
+
+	reread := do(t, h.internal, http.MethodGet, "/internal/tickets/"+ticket.ID, nil, adminHeaders())
+	require.Equal(t, http.StatusOK, reread.Code)
+	var view adminTicketView
+	decodeData(t, reread, &view)
+	assert.Equal(t, model.StatusDeclined, view.Ticket.Status)
+
+	for query, want := range map[string]int{"?status=declined": 1, "?status=closed": 0} {
+		listed := do(t, h.internal, http.MethodGet, "/internal/tickets"+query, nil, adminHeaders())
+		require.Equal(t, http.StatusOK, listed.Code)
+		var page ticketPage
+		decodeData(t, listed, &page)
+		assert.Len(t, page.Tickets, want, "query %s", query)
+	}
+}
+
+func TestBatchUpdateToDeclined(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPost, "/internal/tickets/batch",
+		map[string]any{"ticketIds": []string{ticket.ID}, "status": "declined"}, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var result service.BatchResult
+	decodeData(t, rec, &result)
+	assert.Equal(t, []string{ticket.ID}, result.Updated)
+	assert.Empty(t, result.Failed)
+}
+
 func TestUpdateTicketRejectsAWorkflowSkip(t *testing.T) {
 	h := newHarness(t)
 	ticket := createTicket(t, h)

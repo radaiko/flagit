@@ -19,7 +19,9 @@ func (t TicketType) Valid() bool {
 // Status is a point in the ticket lifecycle.
 //
 // The suggested flow is open → in-progress → resolved → shipped → closed, but
-// admins may move a ticket to any status at any time.
+// admins may move a ticket to any status at any time. Declined sits off that
+// line: it is the answer "we are not doing this", which closed does not say —
+// closed only says nothing further is planned.
 type Status string
 
 const (
@@ -28,10 +30,14 @@ const (
 	StatusResolved   Status = "resolved"
 	StatusShipped    Status = "shipped"
 	StatusClosed     Status = "closed"
+	StatusDeclined   Status = "declined"
 )
 
-// Statuses lists every valid status in lifecycle order.
-var Statuses = []Status{StatusOpen, StatusInProgress, StatusResolved, StatusShipped, StatusClosed}
+// Statuses lists every valid status in lifecycle order, with the terminal
+// off-ramp last: declined is not a stage the normal flow passes through.
+var Statuses = []Status{
+	StatusOpen, StatusInProgress, StatusResolved, StatusShipped, StatusClosed, StatusDeclined,
+}
 
 // Valid reports whether s is a known status.
 func (s Status) Valid() bool {
@@ -51,12 +57,17 @@ func (s Status) Valid() bool {
 // point) and step back one stage (work reopens, a release is rolled back).
 // Anything else is a mistake worth catching — an admin who genuinely means it
 // passes the override, see CanTransitionTo.
+//
+// Declined branches off the live end of the flow only: a ticket is turned down
+// while it is open or being worked on, never once the fix exists. It can be
+// reconsidered (back to open or in-progress) or filed away as closed.
 var allowedTransitions = map[Status][]Status{
-	StatusOpen:       {StatusInProgress, StatusResolved, StatusClosed},
-	StatusInProgress: {StatusOpen, StatusResolved, StatusClosed},
+	StatusOpen:       {StatusInProgress, StatusResolved, StatusClosed, StatusDeclined},
+	StatusInProgress: {StatusOpen, StatusResolved, StatusClosed, StatusDeclined},
 	StatusResolved:   {StatusInProgress, StatusShipped, StatusClosed},
 	StatusShipped:    {StatusResolved, StatusClosed},
 	StatusClosed:     {StatusOpen, StatusInProgress},
+	StatusDeclined:   {StatusOpen, StatusInProgress, StatusClosed},
 }
 
 // CanTransitionTo reports whether a ticket may move from s to next under the

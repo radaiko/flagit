@@ -31,7 +31,16 @@ func TestStatusValid(t *testing.T) {
 	}
 	assert.False(t, Status("done").Valid())
 	assert.False(t, Status("").Valid())
-	assert.Len(t, Statuses, 5)
+	assert.Len(t, Statuses, 6)
+}
+
+// Declined is its own status, not a flavour of closed: a request nobody will
+// act on has to be tellable apart from work that simply ended.
+func TestDeclinedIsAFirstClassStatus(t *testing.T) {
+	assert.True(t, StatusDeclined.Valid())
+	assert.Contains(t, Statuses, StatusDeclined)
+	assert.NotEqual(t, StatusClosed, StatusDeclined)
+	assert.Equal(t, Status("declined"), StatusDeclined)
 }
 
 func TestRoleValid(t *testing.T) {
@@ -80,6 +89,21 @@ func TestStatusCanTransitionTo(t *testing.T) {
 		{StatusOpen, StatusResolved, true},
 		{StatusClosed, StatusShipped, false},
 		{StatusClosed, StatusResolved, false},
+
+		// Declining is a triage decision taken while the ticket is live, and it
+		// can be taken back — reconsidered, or filed away as closed.
+		{StatusOpen, StatusDeclined, true},
+		{StatusInProgress, StatusDeclined, true},
+		{StatusDeclined, StatusOpen, true},
+		{StatusDeclined, StatusInProgress, true},
+		{StatusDeclined, StatusClosed, true},
+		{StatusDeclined, StatusDeclined, true},
+
+		// Declining work that is already done is a mistake, not a decision.
+		{StatusResolved, StatusDeclined, false},
+		{StatusShipped, StatusDeclined, false},
+		{StatusDeclined, StatusResolved, false},
+		{StatusDeclined, StatusShipped, false},
 
 		// Unknown statuses never transition.
 		{Status("nonsense"), StatusOpen, false},

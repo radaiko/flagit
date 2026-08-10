@@ -409,7 +409,7 @@ User-Agent: flagit-webhook/1
               <td>string</td>
               <td>
                 <code>open</code> · <code>in-progress</code> · <code>resolved</code> ·
-                <code>shipped</code> · <code>closed</code>
+                <code>shipped</code> · <code>closed</code> · <code>declined</code>
               </td>
             </tr>
             <tr>
@@ -459,11 +459,17 @@ User-Agent: flagit-webhook/1
           <tbody>
             <tr>
               <td><code>open</code></td>
-              <td><code>in-progress</code>, <code>resolved</code>, <code>closed</code></td>
+              <td>
+                <code>in-progress</code>, <code>resolved</code>, <code>closed</code>,
+                <code>declined</code>
+              </td>
             </tr>
             <tr>
               <td><code>in-progress</code></td>
-              <td><code>open</code>, <code>resolved</code>, <code>closed</code></td>
+              <td>
+                <code>open</code>, <code>resolved</code>, <code>closed</code>,
+                <code>declined</code>
+              </td>
             </tr>
             <tr>
               <td><code>resolved</code></td>
@@ -477,12 +483,22 @@ User-Agent: flagit-webhook/1
               <td><code>closed</code></td>
               <td><code>open</code>, <code>in-progress</code></td>
             </tr>
+            <tr>
+              <td><code>declined</code></td>
+              <td><code>open</code>, <code>in-progress</code>, <code>closed</code></td>
+            </tr>
           </tbody>
         </table>
       </div>
       <p>
         Re-saving a ticket in the status it already holds is always allowed. Anything else needs
         <code>"force": true</code>.
+      </p>
+      <p>
+        <code>declined</code> is the answer “we are not doing this”, which <code>closed</code> does
+        not give — closed only says nothing further is planned. A ticket is turned down while it is
+        <code>open</code> or <code>in-progress</code>, never once the fix exists, so declining
+        <code>resolved</code> or <code>shipped</code> work is refused as a slip.
       </p>
 
       <h2 id="errors">Errors</h2>

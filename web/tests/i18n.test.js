@@ -9,6 +9,7 @@ import {
   rememberLanguage,
   otherLanguage,
 } from '../src/lib/i18n.js';
+import { STATUSES } from '../src/lib/format.js';
 
 describe('translation coverage', () => {
   it('has both supported languages', () => {
@@ -46,10 +47,20 @@ describe('translation coverage', () => {
     expect(identical.length).toBeLessThan(Object.keys(translations.en).length * 0.2);
   });
 
+  // Driven off STATUSES rather than a copy of it, so a status added to the
+  // backend cannot reach the UI without both translations following it.
   it('covers every status the backend can return', () => {
-    for (const status of ['open', 'in-progress', 'resolved', 'shipped', 'closed']) {
-      expect(translations.en[`status.${status}`]).toBeTruthy();
-      expect(translations.de[`status.${status}`]).toBeTruthy();
+    expect(STATUSES).toContain('declined');
+    for (const status of STATUSES) {
+      expect(translations.en[`status.${status}`], `en status.${status}`).toBeTruthy();
+      expect(translations.de[`status.${status}`], `de status.${status}`).toBeTruthy();
+    }
+  });
+
+  it('explains every status in the help glossary, in both languages', () => {
+    for (const status of STATUSES) {
+      expect(translations.en[`help.status.${status}`], `en help.status.${status}`).toBeTruthy();
+      expect(translations.de[`help.status.${status}`], `de help.status.${status}`).toBeTruthy();
     }
   });
 });

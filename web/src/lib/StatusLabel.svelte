@@ -39,6 +39,9 @@
   .status[data-status='closed'] {
     --status-color: var(--status-closed);
   }
+  .status[data-status='declined'] {
+    --status-color: var(--status-declined);
+  }
 
   .dot {
     width: 0.5em;

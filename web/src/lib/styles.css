@@ -11,6 +11,7 @@
  *   blue    water       resolved      fixed, not yet released
  *   green   all clear   shipped       out in the world
  *   slate   retired     closed        no longer live
+ *   purple  reclaimed   declined      looked at, deliberately not dug
  */
 
 :root {
@@ -30,6 +31,7 @@
   --status-resolved: #2f80ed;
   --status-shipped: #0f8f5b;
   --status-closed: #61656e;
+  --status-declined: #7d4bc3;
 
   --danger: #c62828;
 
@@ -74,6 +76,7 @@
     --status-resolved: #5aa0f5;
     --status-shipped: #2bb87c;
     --status-closed: #888d97;
+    --status-declined: #a882ee;
 
     --danger: #ef6c6c;
   }

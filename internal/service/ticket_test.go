@@ -475,6 +475,70 @@ func TestUpdateStatusEnforcesTheWorkflow(t *testing.T) {
 	assert.Equal(t, model.StatusOpen, still.Status, "a rejected move changes nothing")
 }
 
+// Declining is a decision, so it travels the same way any other status change
+// does: along the workflow, with the reason recorded in the same transaction.
+func TestUpdateStatusDeclinesAnOpenTicketWithAReason(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	updated, err := s.UpdateStatusWithComment(
+		ticket.ID, model.StatusDeclined, nil, "Out of scope for this app.")
+
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusDeclined, updated.Status)
+
+	messages, err := s.ListMessagesByID(ticket.ID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "Out of scope for this app.", messages[0].Body)
+}
+
+func TestDeclinedTicketCanBeReconsidered(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+	_, err := s.UpdateStatus(ticket.ID, model.StatusDeclined, nil)
+	require.NoError(t, err)
+
+	reopened, err := s.UpdateStatus(ticket.ID, model.StatusOpen, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, reopened.Status)
+}
+
+// Work that is already done cannot be turned down; that is a slip, and the
+// workflow catches it the way it catches any other skipped stage.
+func TestDecliningShippedWorkNeedsForce(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+	_, err := s.ApplyUpdate(ticket.ID, StatusUpdate{Status: ptr(model.StatusShipped), Force: true})
+	require.NoError(t, err)
+
+	_, err = s.UpdateStatus(ticket.ID, model.StatusDeclined, nil)
+
+	require.ErrorIs(t, err, ErrInvalid)
+	still, err := s.GetTicketByID(ticket.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusShipped, still.Status)
+}
+
+func TestBatchUpdateStatusDeclinesManyAtOnce(t *testing.T) {
+	s, _ := newService(t)
+	first := mustCreate(t, s, validInput())
+	second := mustCreate(t, s, validInput())
+
+	result, err := s.BatchUpdateStatus(
+		[]string{first.ID, second.ID}, model.StatusDeclined, "", false)
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{first.ID, second.ID}, result.Updated)
+	assert.Empty(t, result.Failed)
+	for _, id := range []string{first.ID, second.ID} {
+		got, err := s.GetTicketByID(id)
+		require.NoError(t, err)
+		assert.Equal(t, model.StatusDeclined, got.Status)
+	}
+}
+
 func TestForceBypassesTheWorkflow(t *testing.T) {
 	s, _ := newService(t)
 	ticket := mustCreate(t, s, validInput())

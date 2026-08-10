@@ -57,8 +57,8 @@ describe('formatDateTime', () => {
 });
 
 describe('constants', () => {
-  it('lists the statuses in lifecycle order', () => {
-    expect(STATUSES).toEqual(['open', 'in-progress', 'resolved', 'shipped', 'closed']);
+  it('lists the statuses in lifecycle order, with the off-ramp last', () => {
+    expect(STATUSES).toEqual(['open', 'in-progress', 'resolved', 'shipped', 'closed', 'declined']);
   });
 
   it('lists both ticket types', () => {

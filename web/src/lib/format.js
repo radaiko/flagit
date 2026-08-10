@@ -45,8 +45,11 @@ function toDate(iso) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** The five statuses, in lifecycle order. Mirrors the Go model. */
-export const STATUSES = ['open', 'in-progress', 'resolved', 'shipped', 'closed'];
+/**
+ * Every status, in lifecycle order with the off-ramp last. Mirrors the Go
+ * model: declined is not a stage the normal flow passes through.
+ */
+export const STATUSES = ['open', 'in-progress', 'resolved', 'shipped', 'closed', 'declined'];
 
 /** The two ticket types. */
 export const TYPES = ['bug', 'feature'];
