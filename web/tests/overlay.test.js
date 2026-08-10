@@ -484,6 +484,27 @@ describe('overlay App', () => {
     expect(await screen.findByRole('heading', { name: 'Crash on save' })).toBeInTheDocument();
   });
 
+  /*
+   * The link a host application generates — "Look up ticket FLG-7X3K9Q" —
+   * opens this overlay with the ID in the URL. Landing on the report form
+   * instead, with the ID left on a clipboard to be pasted, is what made that
+   * link read as broken: it went somewhere, and it was not the ticket.
+   */
+  it('opens the ticket named in the URL rather than the report form', async () => {
+    const client = stubPublicClient();
+    render(OverlayApp, { props: { client, lang: 'en', ticketId: 'FLG-7X3K9Q' } });
+
+    expect(await screen.findByRole('heading', { name: 'Crash on save' })).toBeInTheDocument();
+    expect(client.getTicket).toHaveBeenCalledWith('FLG-7X3K9Q');
+    expect(screen.queryByRole('heading', { name: 'What went wrong?' })).not.toBeInTheDocument();
+  });
+
+  it('still opens the report form when no ticket was named', () => {
+    render(OverlayApp, { props: { client: stubPublicClient(), lang: 'en', ticketId: '' } });
+
+    expect(screen.getByRole('heading', { name: 'What went wrong?' })).toBeInTheDocument();
+  });
+
   it('returns to the form from the ticket view', async () => {
     render(OverlayApp, { props: { client: stubPublicClient(), lang: 'en', screen: 'view' } });
 

@@ -22,13 +22,18 @@
     client: providedClient,
     lang: initialLang,
     appInfo = {},
-    screen: initialScreen = 'create',
+    screen: initialScreen,
+    ticketId: initialTicketId = '',
   } = $props();
 
   // Seeded from props once; the overlay owns these after mount.
   let lang = $state(untrack(() => initialLang) ?? detectLanguage());
-  let screen = $state(untrack(() => initialScreen));
-  let lookupId = $state('');
+  let lookupId = $state(untrack(() => initialTicketId));
+  // A ticket named in the URL is a request to open it, so it decides the
+  // opening screen unless the caller asked for one outright. ViewTicket loads
+  // an ID it is given, which is what makes the link land on the ticket instead
+  // of on a lookup field already filled in.
+  let screen = $state(untrack(() => initialScreen ?? (initialTicketId ? 'view' : 'create')));
 
   // The host app can inject a client (and does, in tests); otherwise build one
   // from the device token in the URL or session.
