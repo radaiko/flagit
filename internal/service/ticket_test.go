@@ -475,6 +475,121 @@ func TestUpdateStatusEnforcesTheWorkflow(t *testing.T) {
 	assert.Equal(t, model.StatusOpen, still.Status, "a rejected move changes nothing")
 }
 
+// Deleting is the one operation with no trace left behind, so the test says so
+// exactly: the ticket is gone, and so is everything that hung off it.
+func TestDeleteTicketRemovesItAndItsConversation(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+	_, err := s.PostAgentMessage(ticket.ID, "Looking into it")
+	require.NoError(t, err)
+	_, err = s.RecordCommit(ticket.ID, "abc1234", "fix/crash", "Fix the nil map")
+	require.NoError(t, err)
+
+	deleted, err := s.DeleteTicket(ticket.ID)
+
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	_, err = s.GetTicketByID(ticket.ID)
+	assert.ErrorIs(t, err, ErrNotFound)
+	_, err = s.ListMessagesByID(ticket.ID)
+	assert.ErrorIs(t, err, ErrNotFound, "the conversation goes with the ticket")
+	_, err = s.ListCommits(ticket.ID)
+	assert.ErrorIs(t, err, ErrNotFound, "the commits go with the ticket")
+}
+
+// A ticket that is not there is not an error: the delete is idempotent, so the
+// double-click and the retry both land on "it is gone". The boolean is what
+// stops that being read as a second deletion.
+func TestDeleteTicketReportsAMissWithoutFailing(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+	first, err := s.DeleteTicket(ticket.ID)
+	require.NoError(t, err)
+	require.True(t, first)
+
+	for name, id := range map[string]string{
+		"already deleted": ticket.ID,
+		"never existed":   "FLG-NOPE12",
+		"not an id":       "nonsense",
+		"blank":           "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			deleted, err := s.DeleteTicket(id)
+
+			require.NoError(t, err)
+			assert.False(t, deleted)
+		})
+	}
+}
+
+// ------------------------------------------------------------ bulk delete --
+
+func TestDeleteTicketsRemovesEveryOne(t *testing.T) {
+	s, _ := newService(t)
+	first := mustCreate(t, s, validInput())
+	second := mustCreate(t, s, validInput())
+	keeper := mustCreate(t, s, validInput())
+	_, err := s.PostAgentMessage(first.ID, "Looking into it")
+	require.NoError(t, err)
+
+	result, err := s.DeleteTickets([]string{first.ID, second.ID})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{first.ID, second.ID}, result.Deleted)
+	assert.Empty(t, result.Missing)
+
+	for _, id := range []string{first.ID, second.ID} {
+		_, err := s.GetTicketByID(id)
+		assert.ErrorIs(t, err, ErrNotFound, "ticket %s", id)
+	}
+	_, err = s.GetTicketByID(keeper.ID)
+	assert.NoError(t, err, "a ticket outside the selection survives")
+}
+
+// Unknown IDs are reported, not fatal — the rest of the selection still goes.
+func TestDeleteTicketsReportsMissingIDs(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+
+	result, err := s.DeleteTickets([]string{"FLG-NOPE12", ticket.ID, "nonsense"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{ticket.ID}, result.Deleted)
+	assert.ElementsMatch(t, []string{"FLG-NOPE12", "nonsense"}, result.Missing)
+}
+
+func TestDeleteTicketsRejectsAnEmptySelection(t *testing.T) {
+	s, _ := newService(t)
+
+	for name, ids := range map[string][]string{
+		"nil":      nil,
+		"empty":    {},
+		"blanks":   {"", "  "},
+		"too many": make([]string, MaxDeleteBatch+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := s.DeleteTickets(ids)
+
+			assert.ErrorIs(t, err, ErrInvalid)
+		})
+	}
+}
+
+func TestDeleteTicketsSurfacesADatabaseFailure(t *testing.T) {
+	s, _ := newService(t)
+	ticket := mustCreate(t, s, validInput())
+	_, err := s.DB.SQL().Exec(`DROP TABLE commits`)
+	require.NoError(t, err)
+
+	_, err = s.DeleteTickets([]string{ticket.ID})
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInvalid)
+	_, err = s.GetTicketByID(ticket.ID)
+	assert.NoError(t, err, "the failed delete changed nothing")
+}
+
 // Declining is a decision, so it travels the same way any other status change
 // does: along the workflow, with the reason recorded in the same transaction.
 func TestUpdateStatusDeclinesAnOpenTicketWithAReason(t *testing.T) {

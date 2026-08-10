@@ -206,6 +206,142 @@ func (d *DB) UpdateTicketStatusWithMessage(
 	return tx.Commit()
 }
 
+// DeleteTicket removes a ticket and everything recorded against it, reporting
+// whether there was a ticket there to remove.
+//
+// A miss is not an error. Deleting is idempotent: the caller asked for the
+// ticket to be gone, and after this call it is, whether or not this call is
+// what made it so. That matters most for the double-click and the retried
+// request, which must not turn into a failure the admin has to interpret. The
+// boolean is what keeps that honest — it lets the caller say "already gone"
+// rather than claim a second deletion.
+//
+// The rows are removed permanently: there is no archive table and no
+// soft-delete flag, so nothing here is recoverable afterwards.
+//
+// Messages and commits are deleted explicitly rather than left to the schema's
+// ON DELETE CASCADE. The cascade only fires when the connection has
+// foreign_keys turned on, and that is a per-connection pragma rather than a
+// property of the file — leaning on it would make orphaned rows depend on how
+// the database happened to be opened. All three statements share one
+// transaction, so a ticket can never lose its conversation and survive.
+func (d *DB) DeleteTicket(id string) (bool, error) {
+	deleted, err := d.DeleteTickets([]string{id})
+	if err != nil {
+		return false, err
+	}
+	return len(deleted) == 1, nil
+}
+
+// DeleteTickets removes every named ticket, with its conversation and its
+// commits, and returns the IDs that were actually there — in the order they
+// were given, without the duplicates and the misses.
+//
+// It is atomic: one transaction covers the whole set, so a failure part-way
+// through leaves every ticket in place rather than half a selection deleted
+// and no way to tell which half. An empty or all-missing set is a no-op that
+// returns no IDs, not an error, for the same reason DeleteTicket tolerates a
+// miss.
+//
+// The IDs are read back inside the transaction before anything is removed,
+// which is what makes the return value the set that was genuinely deleted
+// rather than the set the caller hoped for.
+func (d *DB) DeleteTickets(ids []string) ([]string, error) {
+	unique := dedupe(ids)
+	if len(unique) == 0 {
+		return []string{}, nil
+	}
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return nil, err
+	}
+	// Rollback after a successful Commit is a no-op, so this covers every early
+	// return below — and it is what makes the whole set atomic.
+	defer func() { _ = tx.Rollback() }()
+
+	placeholders, args := inClause(unique)
+
+	present, err := existingTicketIDs(tx, placeholders, args)
+	if err != nil {
+		return nil, err
+	}
+	if len(present) == 0 {
+		// Nothing to do, but still commit: an open transaction left dangling
+		// would hold the single writer connection.
+		return []string{}, tx.Commit()
+	}
+
+	for _, stmt := range [...]string{
+		`DELETE FROM commits WHERE ticket_id IN (` + placeholders + `)`,
+		`DELETE FROM messages WHERE ticket_id IN (` + placeholders + `)`,
+		`DELETE FROM tickets WHERE id IN (` + placeholders + `)`,
+	} {
+		if _, err := tx.Exec(stmt, args...); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	// Ordered by the caller's request rather than by what SQLite returned, so
+	// the response reads back in the order the admin selected.
+	deleted := make([]string, 0, len(present))
+	for _, id := range unique {
+		if present[id] {
+			deleted = append(deleted, id)
+		}
+	}
+	return deleted, nil
+}
+
+// existingTicketIDs reports which of the named tickets exist, as a set.
+func existingTicketIDs(tx *sql.Tx, placeholders string, args []any) (map[string]bool, error) {
+	rows, err := tx.Query(`SELECT id FROM tickets WHERE id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	present := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		present[id] = true
+	}
+	return present, rows.Err()
+}
+
+// dedupe drops blanks and repeats while keeping first-seen order. A selection
+// that names the same ticket twice is a UI accident, not a request to delete
+// it twice.
+func dedupe(ids []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// inClause builds the "?,?,?" placeholder list and matching argument slice for
+// an IN clause over ids.
+func inClause(ids []string) (string, []any) {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","), args
+}
+
 // TouchTicket bumps UpdatedAt so a changed ticket resurfaces in polling.
 func (d *DB) TouchTicket(id string) error {
 	res, err := d.sql.Exec(`UPDATE tickets SET updated_at = ? WHERE id = ?`, FormatTime(d.Now()), id)

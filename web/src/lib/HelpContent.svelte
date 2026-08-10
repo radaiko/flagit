@@ -46,6 +46,7 @@
     topic('help.admin.workflow', { terms: STATUS_TERMS }),
     topic('help.admin.apps'),
     topic('help.admin.mass'),
+    topic('help.admin.delete'),
     topic('help.admin.hermes'),
     topic('help.admin.commits'),
     topic('help.admin.access'),

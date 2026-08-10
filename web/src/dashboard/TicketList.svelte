@@ -7,6 +7,7 @@
   import FlagTag from '../lib/FlagTag.svelte';
   import StatusLabel from '../lib/StatusLabel.svelte';
   import MassOperations from './MassOperations.svelte';
+  import DeleteConfirm from '../lib/DeleteConfirm.svelte';
   import { formatDate, STATUSES, TYPES } from '../lib/format.js';
 
   let { client, lang = 'en', onopen } = $props();
@@ -16,6 +17,13 @@
   let loading = $state(true);
   let errorKey = $state('');
   let selected = $state([]);
+
+  // The row whose delete has been asked about, if any. One at a time: a second
+  // row's Delete button replaces the open question rather than stacking a
+  // second one, so there is never a doubt about which ticket is being confirmed.
+  let confirmingId = $state('');
+  let deletingId = $state('');
+  let deleteErrorKey = $state('');
 
   let appFilter = $state('');
   let statusFilter = $state('');
@@ -65,6 +73,38 @@
     selected = [];
     await load();
   }
+
+  /**
+   * Opening the question is all the button does — nothing is sent until the
+   * confirmation inside the row is clicked.
+   */
+  function askToDelete(id) {
+    deleteErrorKey = '';
+    confirmingId = id;
+  }
+
+  function cancelDelete() {
+    deleteErrorKey = '';
+    confirmingId = '';
+  }
+
+  async function confirmDelete(id) {
+    deleteErrorKey = '';
+    deletingId = id;
+    try {
+      await client.deleteTicket(id);
+      confirmingId = '';
+      // Drop it from the selection too, or a later bulk action would name a
+      // ticket that is no longer there.
+      selected = selected.filter((s) => s !== id);
+      await load();
+    } catch (error) {
+      // The ticket is still there; leave the question open with the reason.
+      deleteErrorKey = error.messageKey ?? 'error.generic';
+    } finally {
+      deletingId = '';
+    }
+  }
 </script>
 
 <section class="stack">
@@ -111,6 +151,7 @@
       {selected}
       {lang}
       onapplied={afterBatch}
+      ondeleted={afterBatch}
       onclear={() => (selected = [])}
     />
   {/if}
@@ -140,6 +181,7 @@
           <th class="field-label">{t('list.colApp', lang)}</th>
           <th class="field-label">{t('list.colStatus', lang)}</th>
           <th class="field-label">{t('list.colCreated', lang)}</th>
+          <th class="field-label">{t('list.colActions', lang)}</th>
         </tr>
       </thead>
       <tbody>
@@ -165,7 +207,34 @@
             <td class="mono app">{ticket.appName}</td>
             <td><StatusLabel status={ticket.status} {lang} /></td>
             <td class="mono when">{formatDate(ticket.createdAt, lang)}</td>
+            <td class="actions">
+              <button
+                type="button"
+                class="btn btn-danger btn-small"
+                onclick={() => askToDelete(ticket.id)}
+                aria-label="{t('list.deleteTicket', lang)} {ticket.id}"
+              >
+                {t('list.delete', lang)}
+              </button>
+            </td>
           </tr>
+          {#if confirmingId === ticket.id}
+            <tr class="confirm-row">
+              <td colspan="7">
+                <DeleteConfirm
+                  heading={t('detail.deleteHeading', lang)}
+                  warning={t('detail.deleteWarning', lang)}
+                  confirmLabel={t('detail.deleteConfirm', lang)}
+                  cancelLabel={t('detail.deleteCancel', lang)}
+                  busyLabel={t('detail.deleting', lang)}
+                  busy={deletingId === ticket.id}
+                  error={deleteErrorKey ? t(deleteErrorKey, lang) : ''}
+                  onconfirm={() => confirmDelete(ticket.id)}
+                  oncancel={cancelDelete}
+                />
+              </td>
+            </tr>
+          {/if}
         {/each}
       </tbody>
     </table>
@@ -253,5 +322,17 @@
   .when {
     color: var(--ink-2);
     white-space: nowrap;
+  }
+
+  .actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* The question takes the full width under its row rather than sitting in the
+     narrow actions column, where the warning would be unreadable. */
+  .confirm-row td {
+    padding: var(--space-3);
+    background: var(--paper-2);
   }
 </style>

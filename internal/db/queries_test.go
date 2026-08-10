@@ -431,6 +431,234 @@ func TestDeletingTicketCascades(t *testing.T) {
 	assert.Empty(t, commits)
 }
 
+// Deletion is permanent and total: the ticket, its conversation and its
+// commits all go, and nothing about it survives a re-read.
+func TestDeleteTicketRemovesTheTicketAndEverythingUnderIt(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+	require.NoError(t, d.CreateMessage(&model.Message{TicketID: ticket.ID, Body: "hi", Role: model.RoleUser}))
+	require.NoError(t, d.CreateCommit(&model.CommitInfo{TicketID: ticket.ID, CommitHash: "abc"}))
+
+	deleted, err := d.DeleteTicket(ticket.ID)
+	require.NoError(t, err)
+	assert.True(t, deleted, "there was a ticket there to delete")
+
+	_, err = d.GetTicket(ticket.ID)
+	assert.ErrorIs(t, err, ErrNotFound)
+	messages, err := d.ListMessagesByTicket(ticket.ID)
+	require.NoError(t, err)
+	assert.Empty(t, messages)
+	commits, err := d.ListCommitsByTicket(ticket.ID)
+	require.NoError(t, err)
+	assert.Empty(t, commits)
+
+	n, err := d.CountTickets(TicketFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+}
+
+// The rows really are gone from the tables, not merely invisible to the
+// queries above. A soft delete that the read path filtered out would pass
+// every other test in this file.
+func TestDeleteTicketLeavesNoRowsBehind(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+	require.NoError(t, d.CreateMessage(&model.Message{TicketID: ticket.ID, Body: "hi", Role: model.RoleUser}))
+	require.NoError(t, d.CreateCommit(&model.CommitInfo{TicketID: ticket.ID, CommitHash: "abc"}))
+
+	_, err := d.DeleteTicket(ticket.ID)
+	require.NoError(t, err)
+
+	for _, table := range []string{"tickets", "messages", "commits"} {
+		var n int
+		require.NoError(t, d.SQL().QueryRow(`SELECT COUNT(*) FROM `+table).Scan(&n))
+		assert.Equal(t, 0, n, "rows left in %s", table)
+	}
+}
+
+// One ticket goes, the one beside it stays. A delete that took the neighbours
+// with it would be the worst kind of bug here, because there is nothing to
+// restore from.
+func TestDeleteTicketLeavesOtherTicketsAlone(t *testing.T) {
+	d := newTestDB(t)
+	doomed := newTicket("notes")
+	require.NoError(t, d.CreateTicket(doomed))
+	require.NoError(t, d.CreateMessage(&model.Message{TicketID: doomed.ID, Body: "bye", Role: model.RoleUser}))
+	keeper := newTicket("notes")
+	require.NoError(t, d.CreateTicket(keeper))
+	require.NoError(t, d.CreateMessage(&model.Message{TicketID: keeper.ID, Body: "still here", Role: model.RoleUser}))
+
+	deleted, err := d.DeleteTicket(doomed.ID)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	got, err := d.GetTicket(keeper.ID)
+	require.NoError(t, err)
+	assert.Equal(t, keeper.ID, got.ID)
+	messages, err := d.ListMessagesByTicket(keeper.ID)
+	require.NoError(t, err)
+	assert.Len(t, messages, 1)
+}
+
+// Deleting what is not there is the retry, and the retry succeeds quietly.
+func TestDeleteTicketUnknownTicketIsNotAnError(t *testing.T) {
+	d := newTestDB(t)
+
+	deleted, err := d.DeleteTicket("FLG-NOPE12")
+
+	require.NoError(t, err)
+	assert.False(t, deleted, "nothing was there to delete")
+}
+
+func TestDeleteTicketTwiceReportsTheSecondAsAMiss(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+
+	first, err := d.DeleteTicket(ticket.ID)
+	require.NoError(t, err)
+	second, err := d.DeleteTicket(ticket.ID)
+	require.NoError(t, err)
+
+	assert.True(t, first)
+	assert.False(t, second, "the second delete found nothing")
+}
+
+// ------------------------------------------------------------ bulk delete --
+
+func TestDeleteTicketsRemovesTheWholeSelection(t *testing.T) {
+	d := newTestDB(t)
+	var ids []string
+	for range 3 {
+		ticket := newTicket("notes")
+		require.NoError(t, d.CreateTicket(ticket))
+		require.NoError(t, d.CreateMessage(
+			&model.Message{TicketID: ticket.ID, Body: "hi", Role: model.RoleUser}))
+		require.NoError(t, d.CreateCommit(&model.CommitInfo{TicketID: ticket.ID, CommitHash: "abc"}))
+		ids = append(ids, ticket.ID)
+	}
+	keeper := newTicket("notes")
+	require.NoError(t, d.CreateTicket(keeper))
+
+	deleted, err := d.DeleteTickets(ids)
+
+	require.NoError(t, err)
+	assert.Equal(t, ids, deleted, "reported in the order they were asked for")
+	for _, id := range ids {
+		_, err := d.GetTicket(id)
+		assert.ErrorIs(t, err, ErrNotFound, "ticket %s", id)
+		messages, err := d.ListMessagesByTicket(id)
+		require.NoError(t, err)
+		assert.Empty(t, messages, "messages for %s", id)
+		commits, err := d.ListCommitsByTicket(id)
+		require.NoError(t, err)
+		assert.Empty(t, commits, "commits for %s", id)
+	}
+
+	survivor, err := d.GetTicket(keeper.ID)
+	require.NoError(t, err)
+	assert.Equal(t, keeper.ID, survivor.ID, "a ticket outside the selection is untouched")
+}
+
+// The IDs that were not there simply do not come back, and the ones that were
+// still go. A miss in the middle of a selection must not cost the rest of it.
+func TestDeleteTicketsSkipsMissingIDs(t *testing.T) {
+	d := newTestDB(t)
+	present := newTicket("notes")
+	require.NoError(t, d.CreateTicket(present))
+
+	deleted, err := d.DeleteTickets([]string{"FLG-NOPE12", present.ID, "FLG-GONE99"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{present.ID}, deleted)
+}
+
+func TestDeleteTicketsWithNothingToDo(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+
+	for name, ids := range map[string][]string{
+		"empty":       {},
+		"nil":         nil,
+		"all blank":   {"", "   "},
+		"all missing": {"FLG-NOPE12", "FLG-GONE99"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deleted, err := d.DeleteTickets(ids)
+
+			require.NoError(t, err)
+			assert.Empty(t, deleted)
+			_, err = d.GetTicket(ticket.ID)
+			assert.NoError(t, err, "the ticket that was there is still there")
+		})
+	}
+}
+
+// A selection that names the same ticket twice deletes it once and says so
+// once, rather than reporting a deletion that never happened.
+func TestDeleteTicketsDeduplicates(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+
+	deleted, err := d.DeleteTickets([]string{ticket.ID, ticket.ID, ticket.ID})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{ticket.ID}, deleted)
+}
+
+// Atomicity is the whole point of the bulk path: if the delete cannot finish,
+// nothing may have gone.
+//
+// The statements run commits → messages → tickets, so dropping the messages
+// table fails the transaction at the second statement — after the first has
+// already deleted rows inside it. Those rows have to come back, which is what
+// distinguishes one transaction from three separate deletes.
+func TestDeleteTicketsIsAtomic(t *testing.T) {
+	d := newTestDB(t)
+	var ids []string
+	for range 3 {
+		ticket := newTicket("notes")
+		require.NoError(t, d.CreateTicket(ticket))
+		require.NoError(t, d.CreateCommit(&model.CommitInfo{TicketID: ticket.ID, CommitHash: "abc"}))
+		ids = append(ids, ticket.ID)
+	}
+	_, err := d.SQL().Exec(`DROP TABLE messages`)
+	require.NoError(t, err)
+
+	deleted, err := d.DeleteTickets(ids)
+
+	require.Error(t, err)
+	assert.Nil(t, deleted)
+
+	// The commits survive: their DELETE ran, then was rolled back with the rest.
+	var commits int
+	require.NoError(t, d.SQL().QueryRow(`SELECT COUNT(*) FROM commits`).Scan(&commits))
+	assert.Equal(t, 3, commits, "the rolled-back transaction restored every commit row")
+
+	for _, id := range ids {
+		_, err := d.GetTicket(id)
+		assert.NoError(t, err, "ticket %s is still there", id)
+	}
+}
+
+func TestDeleteTicketsReportsAQueryFailure(t *testing.T) {
+	d := newTestDB(t)
+	ticket := newTicket("notes")
+	require.NoError(t, d.CreateTicket(ticket))
+	_, err := d.SQL().Exec(`DROP TABLE commits`)
+	require.NoError(t, err)
+
+	_, err = d.DeleteTickets([]string{ticket.ID})
+
+	require.Error(t, err)
+	_, err = d.GetTicket(ticket.ID)
+	assert.NoError(t, err, "a failed delete left the ticket alone")
+}
+
 func TestAppsCRUD(t *testing.T) {
 	d := newTestDB(t)
 

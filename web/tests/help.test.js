@@ -40,6 +40,7 @@ describe('help topics', () => {
       'help.admin.workflow',
       'help.admin.apps',
       'help.admin.mass',
+      'help.admin.delete',
       'help.admin.hermes',
       'help.admin.commits',
       'help.admin.access',

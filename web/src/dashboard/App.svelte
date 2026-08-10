@@ -181,11 +181,19 @@
       {:else if view === 'help'}
         <Help {lang} />
       {:else if openTicketId}
+        <!-- ondeleted is passed explicitly even though it does what onback
+             does. TicketDetail falls back to onback when it is absent, which
+             is right for a caller that has no separate answer, but this shell
+             does have one: closing the detail after a delete is not the admin
+             navigating back, it is the screen losing the thing it was showing.
+             Naming it here keeps that distinction available the moment the two
+             need to differ. -->
         <TicketDetail
           {client}
           {lang}
           ticketId={openTicketId}
           onback={() => (openTicketId = '')}
+          ondeleted={() => (openTicketId = '')}
         />
       {:else}
         <TicketList {client} {lang} onopen={(id) => (openTicketId = id)} />

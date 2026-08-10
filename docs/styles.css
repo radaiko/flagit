@@ -629,6 +629,11 @@ td code {
 .verb-patch {
   background: var(--status-in-progress);
 }
+/* The one verb that destroys something, in the same colour the danger notes
+   use, so it reads as a warning in a table of otherwise equal-weight rows. */
+.verb-delete {
+  background: var(--status-open);
+}
 
 /* ----------------------------------------------------------------- notes -- */
 

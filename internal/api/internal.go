@@ -245,6 +245,73 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, ticket, "ticket updated")
 }
 
+// deletedTicket names what a delete removed. Deleted distinguishes the request
+// that did the removing from the retry that found nothing left, which the
+// status code deliberately does not.
+type deletedTicket struct {
+	ID      string `json:"id"`
+	Deleted bool   `json:"deleted"`
+}
+
+// handleDeleteTicket permanently removes a ticket, its conversation and its
+// commits.
+//
+// Admin only. It is registered under /internal, behind the admin key, and has
+// no counterpart on the public router: the device token proves who reported a
+// ticket, which is not the same as being allowed to erase the record of it.
+//
+// A ticket that is not there is a 200, not a 404: DELETE is idempotent here, so
+// a double-click, a retried request and a second admin doing the same thing all
+// land on the same answer — the ticket is gone. The body says which of those
+// happened for a caller that cares.
+func (s *Server) handleDeleteTicket(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	deleted, err := s.Service.DeleteTicket(id)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	message := "ticket already deleted"
+	if deleted {
+		message = "ticket deleted"
+	}
+	s.writeJSON(w, http.StatusOK, deletedTicket{ID: id, Deleted: deleted}, message)
+}
+
+// deleteTicketsRequest is the body for a bulk delete.
+//
+// It mirrors batchRequest's ticketIds field so the two bulk operations read the
+// same way from a client, and carries nothing else: there is no force flag and
+// no options, because there is only one thing deleting can do.
+type deleteTicketsRequest struct {
+	TicketIDs []string `json:"ticketIds"`
+}
+
+// handleDeleteTickets permanently removes a whole selection of tickets.
+//
+// It is a POST rather than a DELETE with a body: bodies on DELETE are legal but
+// unevenly handled by proxies and clients, and this is the one request in the
+// system where a silently dropped body would be worst. The route name says what
+// it does, and it sits beside /tickets/batch, which is the same shape.
+//
+// The whole selection is deleted in one transaction — see
+// service.DeleteTickets. Unknown IDs come back under "missing" rather than
+// failing the request.
+func (s *Server) handleDeleteTickets(w http.ResponseWriter, r *http.Request) {
+	var req deleteTicketsRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+
+	result, err := s.Service.DeleteTickets(req.TicketIDs)
+	if err != nil {
+		s.writeServiceError(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result, "tickets deleted")
+}
+
 // commitRequest is the body Hermes posts after committing a fix.
 type commitRequest struct {
 	CommitHash string `json:"commitHash"`

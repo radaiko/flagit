@@ -366,6 +366,95 @@ func (s *Service) ApplyUpdate(ticketID string, update StatusUpdate) (*model.Tick
 	return s.DB.GetTicket(ticket.ID)
 }
 
+// DeleteResult reports what a deletion removed. Deleted lists the tickets that
+// were there and are now gone; Missing lists the IDs that named nothing, which
+// is the normal outcome of a retry rather than a failure.
+type DeleteResult struct {
+	Deleted []string `json:"deleted"`
+	Missing []string `json:"missing"`
+}
+
+// MaxDeleteBatch bounds one bulk delete. The whole set is deleted in a single
+// transaction on the one writer connection, so an unbounded list would hold
+// that connection for as long as it took — and a selection this large is far
+// past anything the dashboard's checkboxes can produce by hand.
+const MaxDeleteBatch = 500
+
+// DeleteTicket permanently removes a ticket, its conversation and its commits,
+// and reports whether there was a ticket there to remove.
+//
+// Admin only, and deliberately without the device-token variant every other
+// ticket operation has: a reporter who could erase a ticket could erase the
+// record of what was reported. Nothing is archived, so there is no undo — the
+// callers that offer this ask first.
+//
+// A ticket that is not there is not an error: see DeleteTickets.
+func (s *Service) DeleteTicket(ticketID string) (bool, error) {
+	id := strings.TrimSpace(ticketID)
+	if !db.ValidTicketID(id) {
+		// An ID that cannot name a ticket names nothing, which is the same
+		// answer as an ID that named one yesterday. Rejecting it instead would
+		// make a malformed retry louder than a well-formed one.
+		return false, nil
+	}
+	return s.DB.DeleteTicket(id)
+}
+
+// DeleteTickets permanently removes every named ticket, atomically: either the
+// whole selection goes or none of it does.
+//
+// Unknown IDs are reported in Missing rather than failing the request. That is
+// the deliberate difference from BatchUpdateStatus, which can fail a ticket on
+// its own terms because a status change has to be legal for that ticket;
+// deletion has no such rule, so the only way an ID can fail is by not being
+// there — and "not there" is what the caller asked for.
+func (s *Service) DeleteTickets(ids []string) (*DeleteResult, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%w: at least one ticket id is required", ErrInvalid)
+	}
+	if len(ids) > MaxDeleteBatch {
+		return nil, fmt.Errorf(
+			"%w: at most %d tickets can be deleted at once, got %d",
+			ErrInvalid, MaxDeleteBatch, len(ids))
+	}
+
+	// Malformed IDs never reach the database; they cannot match a row, and
+	// keeping them out means the transaction only ever sees real ticket IDs.
+	requested, valid := []string{}, []string{}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		requested = append(requested, id)
+		if db.ValidTicketID(id) {
+			valid = append(valid, id)
+		}
+	}
+	if len(requested) == 0 {
+		return nil, fmt.Errorf("%w: at least one ticket id is required", ErrInvalid)
+	}
+
+	deleted, err := s.DB.DeleteTickets(valid)
+	if err != nil {
+		return nil, err
+	}
+
+	gone := map[string]bool{}
+	for _, id := range deleted {
+		gone[id] = true
+	}
+	missing := []string{}
+	for _, id := range requested {
+		if !gone[id] {
+			missing = append(missing, id)
+		}
+	}
+	return &DeleteResult{Deleted: deleted, Missing: missing}, nil
+}
+
 // workflowDescription is the documented order, quoted back in errors so a
 // caller does not have to go looking for it.
 const workflowDescription = "open → in-progress → resolved → shipped → closed"

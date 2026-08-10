@@ -240,6 +240,32 @@ export function createAdminClient({ adminKey, baseUrl = '', fetchImpl }) {
       return call(`/internal/tickets/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
 
+    /**
+     * Permanently remove a ticket, its conversation and its commits.
+     *
+     * There is no archive and no undo, so a caller offering this has to ask
+     * first. Deleting is idempotent: a ticket that is already gone resolves
+     * rather than rejecting, with `deleted: false` to say nothing was removed.
+     */
+    deleteTicket(id) {
+      return call(`/internal/tickets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    /**
+     * Permanently remove a whole selection of tickets, atomically: either all
+     * of them go or none of them do.
+     *
+     * IDs that name nothing come back under `missing` instead of failing the
+     * call. A POST rather than a DELETE because the request carries a body —
+     * see the handler for why that matters here.
+     */
+    deleteTickets(ticketIds) {
+      return call('/internal/tickets/batch/delete', {
+        method: 'POST',
+        body: { ticketIds },
+      });
+    },
+
     /** Reply to the reporter. */
     postMessage(id, text) {
       return call(`/internal/tickets/${encodeURIComponent(id)}/messages`, {

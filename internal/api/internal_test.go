@@ -33,6 +33,8 @@ func TestInternalRoutesRequireAdminKey(t *testing.T) {
 		{http.MethodGet, "/internal/tickets"},
 		{http.MethodGet, "/internal/tickets/FLG-ABC123"},
 		{http.MethodPatch, "/internal/tickets/FLG-ABC123"},
+		{http.MethodDelete, "/internal/tickets/FLG-ABC123"},
+		{http.MethodPost, "/internal/tickets/batch/delete"},
 		{http.MethodGet, "/internal/tickets/FLG-ABC123/messages"},
 		{http.MethodPost, "/internal/tickets/FLG-ABC123/messages"},
 		{http.MethodGet, "/internal/tickets/FLG-ABC123/commits"},
@@ -479,6 +481,220 @@ func TestUpdateTicketCommentFailure(t *testing.T) {
 
 	rec := do(t, h.internal, http.MethodPatch, "/internal/tickets/"+ticket.ID,
 		map[string]any{"status": "resolved", "comment": "done"}, adminHeaders())
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// ---------------------------------------------------------------- delete --
+
+// Deleting has to take the whole ticket with it: gone from the ticket
+// endpoint, gone from the list, and gone from the conversation and commits
+// that hung off it.
+func TestDeleteTicketRemovesItEverywhere(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+	postAgentMessage(t, h, ticket.ID, "Looking into it")
+	recorded := do(t, h.internal, http.MethodPost, "/internal/tickets/"+ticket.ID+"/commits",
+		map[string]any{"commitHash": "a1b2c3d"}, adminHeaders())
+	require.Equal(t, http.StatusCreated, recorded.Code, "body: %s", recorded.Body.String())
+
+	rec := do(t, h.internal, http.MethodDelete, "/internal/tickets/"+ticket.ID, nil, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var deleted struct {
+		ID      string `json:"id"`
+		Deleted bool   `json:"deleted"`
+	}
+	decodeData(t, rec, &deleted)
+	assert.Equal(t, ticket.ID, deleted.ID)
+	assert.True(t, deleted.Deleted, "this request is the one that removed it")
+
+	for path, want := range map[string]int{
+		"/internal/tickets/" + ticket.ID:               http.StatusNotFound,
+		"/internal/tickets/" + ticket.ID + "/messages": http.StatusNotFound,
+		"/internal/tickets/" + ticket.ID + "/commits":  http.StatusNotFound,
+	} {
+		gone := do(t, h.internal, http.MethodGet, path, nil, adminHeaders())
+		assert.Equal(t, want, gone.Code, "GET %s", path)
+	}
+
+	listed := do(t, h.internal, http.MethodGet, "/internal/tickets", nil, adminHeaders())
+	require.Equal(t, http.StatusOK, listed.Code)
+	var page ticketPage
+	decodeData(t, listed, &page)
+	assert.Empty(t, page.Tickets)
+	assert.Equal(t, 0, page.Total)
+}
+
+// The reporter can no longer reach it either — the row is gone, not hidden.
+func TestDeletedTicketIsGoneFromThePublicAPI(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodDelete, "/internal/tickets/"+ticket.ID, nil, adminHeaders())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	gone := do(t, h.public, http.MethodGet, "/api/tickets/"+ticket.ID, nil, deviceHeaders())
+	assert.Equal(t, http.StatusNotFound, gone.Code)
+}
+
+// DELETE is idempotent: a ticket that is already gone is a 200, not a 404, so
+// a double-click or a retried request does not surface as a failure. The
+// "deleted" flag is what keeps the second call from claiming a second removal.
+func TestDeleteTicketMissingIsIdempotent(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+	first := do(t, h.internal, http.MethodDelete, "/internal/tickets/"+ticket.ID, nil, adminHeaders())
+	require.Equal(t, http.StatusOK, first.Code)
+
+	for name, id := range map[string]string{
+		"already deleted": ticket.ID,
+		"never existed":   "FLG-ZZZZZZ",
+		"not an id":       "nonsense",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := do(t, h.internal, http.MethodDelete, "/internal/tickets/"+id, nil, adminHeaders())
+
+			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+			var deleted struct {
+				ID      string `json:"id"`
+				Deleted bool   `json:"deleted"`
+			}
+			decodeData(t, rec, &deleted)
+			assert.False(t, deleted.Deleted, "nothing was there to remove")
+		})
+	}
+}
+
+// Deleting is the most destructive thing this API can do, so the boundary it
+// sits behind is worth stating on its own: the public listener does not route
+// it at all, with or without the admin key.
+func TestDeleteTicketIsNotOnThePublicRouter(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	for name, headers := range map[string]map[string]string{
+		"device token": deviceHeaders(),
+		"admin key":    adminHeaders(),
+		"nothing":      nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := do(t, h.public, http.MethodDelete, "/api/tickets/"+ticket.ID, nil, headers)
+
+			assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+		})
+	}
+
+	still := do(t, h.internal, http.MethodGet, "/internal/tickets/"+ticket.ID, nil, adminHeaders())
+	assert.Equal(t, http.StatusOK, still.Code, "the ticket is still there")
+}
+
+// deleteResult mirrors service.DeleteResult for decoding in these tests.
+type deleteResult struct {
+	Deleted []string `json:"deleted"`
+	Missing []string `json:"missing"`
+}
+
+// The bulk path is what the dashboard's selection uses, so it has to clear a
+// whole selection and leave everything outside it alone.
+func TestDeleteTicketsRemovesTheSelection(t *testing.T) {
+	h := newHarness(t)
+	first := createTicket(t, h)
+	second := createTicket(t, h)
+	keeper := createTicket(t, h)
+	postAgentMessage(t, h, first.ID, "Looking into it")
+
+	rec := do(t, h.internal, http.MethodPost, "/internal/tickets/batch/delete",
+		map[string]any{"ticketIds": []string{first.ID, second.ID}}, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var result deleteResult
+	decodeData(t, rec, &result)
+	assert.Equal(t, []string{first.ID, second.ID}, result.Deleted)
+	assert.Empty(t, result.Missing)
+
+	for _, id := range []string{first.ID, second.ID} {
+		gone := do(t, h.internal, http.MethodGet, "/internal/tickets/"+id, nil, adminHeaders())
+		assert.Equal(t, http.StatusNotFound, gone.Code, "ticket %s", id)
+	}
+	still := do(t, h.internal, http.MethodGet, "/internal/tickets/"+keeper.ID, nil, adminHeaders())
+	assert.Equal(t, http.StatusOK, still.Code, "the unselected ticket survives")
+
+	listed := do(t, h.internal, http.MethodGet, "/internal/tickets", nil, adminHeaders())
+	require.Equal(t, http.StatusOK, listed.Code)
+	var page ticketPage
+	decodeData(t, listed, &page)
+	assert.Equal(t, 1, page.Total, "only the unselected ticket is left")
+}
+
+// An ID that names nothing is reported rather than failing the sweep, so one
+// stale row in the admin's browser cannot block the rest of the deletion.
+func TestDeleteTicketsReportsMissingIDs(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+
+	rec := do(t, h.internal, http.MethodPost, "/internal/tickets/batch/delete",
+		map[string]any{"ticketIds": []string{"FLG-ZZZZZZ", ticket.ID}}, adminHeaders())
+
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var result deleteResult
+	decodeData(t, rec, &result)
+	assert.Equal(t, []string{ticket.ID}, result.Deleted)
+	assert.Equal(t, []string{"FLG-ZZZZZZ"}, result.Missing)
+}
+
+func TestDeleteTicketsRejectsABadRequest(t *testing.T) {
+	h := newHarness(t)
+
+	tests := []struct {
+		name string
+		body any
+	}{
+		{"no ids", map[string]any{"ticketIds": []string{}}},
+		{"absent field", map[string]any{}},
+		{"malformed", "{"},
+		{"unknown field", map[string]any{"ticketIds": []string{"FLG-ABC123"}, "force": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := do(t, h.internal, http.MethodPost, "/internal/tickets/batch/delete",
+				tt.body, adminHeaders())
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+// Nothing may be deleted when the transaction cannot finish, and the caller has
+// to be told rather than shown a partial success.
+func TestDeleteTicketsDBFailureDeletesNothing(t *testing.T) {
+	h := newHarness(t)
+	first := createTicket(t, h)
+	second := createTicket(t, h)
+	_, err := h.Service.DB.SQL().Exec(`DROP TABLE messages`)
+	require.NoError(t, err)
+
+	rec := do(t, h.internal, http.MethodPost, "/internal/tickets/batch/delete",
+		map[string]any{"ticketIds": []string{first.ID, second.ID}}, adminHeaders())
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	// Asked of the table directly: dropping messages also breaks the read
+	// endpoint, so a 500 from GET would not distinguish "still there" from
+	// "deleted".
+	var remaining int
+	require.NoError(t, h.Service.DB.SQL().
+		QueryRow(`SELECT COUNT(*) FROM tickets WHERE id IN (?, ?)`, first.ID, second.ID).
+		Scan(&remaining))
+	assert.Equal(t, 2, remaining, "the rolled-back transaction left both tickets in place")
+}
+
+func TestDeleteTicketDBFailure(t *testing.T) {
+	h := newHarness(t)
+	ticket := createTicket(t, h)
+	_, err := h.Service.DB.SQL().Exec(`DROP TABLE commits`)
+	require.NoError(t, err)
+
+	rec := do(t, h.internal, http.MethodDelete, "/internal/tickets/"+ticket.ID, nil, adminHeaders())
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }

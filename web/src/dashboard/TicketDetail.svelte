@@ -9,9 +9,10 @@
   import FlagTag from '../lib/FlagTag.svelte';
   import StatusLabel from '../lib/StatusLabel.svelte';
   import MessageList from '../lib/MessageList.svelte';
+  import DeleteConfirm from '../lib/DeleteConfirm.svelte';
   import { formatDate, formatDateTime, STATUSES } from '../lib/format.js';
 
-  let { client, ticketId, lang = 'en', onback } = $props();
+  let { client, ticketId, lang = 'en', onback, ondeleted } = $props();
 
   let ticket = $state(null);
   let loading = $state(true);
@@ -22,6 +23,13 @@
   let comment = $state('');
   let saving = $state(false);
   let saved = $state(false);
+
+  // Deleting keeps its own confirmation state and its own error, so a failed
+  // save cannot leave a warning sitting next to the delete button, and a failed
+  // delete cannot look like a failed save.
+  let confirmingDelete = $state(false);
+  let deleting = $state(false);
+  let deleteErrorKey = $state('');
 
   $effect(() => {
     load(ticketId);
@@ -54,6 +62,40 @@
       errorKey = error.messageKey ?? 'error.generic';
     } finally {
       saving = false;
+    }
+  }
+
+  /**
+   * Deleting is irreversible, so it takes two deliberate clicks: the button
+   * only opens the confirmation, and the confirmation is what calls the API.
+   * Nothing is sent until then.
+   */
+  function askToDelete() {
+    deleteErrorKey = '';
+    saved = false;
+    confirmingDelete = true;
+  }
+
+  function cancelDelete() {
+    deleteErrorKey = '';
+    confirmingDelete = false;
+  }
+
+  async function confirmDelete() {
+    deleteErrorKey = '';
+    deleting = true;
+    try {
+      await client.deleteTicket(ticket.id);
+      confirmingDelete = false;
+      // There is nothing left to show here, so the screen hands back to the
+      // list, which reloads without the ticket that has just gone.
+      (ondeleted ?? onback)?.(ticket.id);
+    } catch (error) {
+      // The ticket is still there; keep the confirmation open so the admin can
+      // read what went wrong and decide again.
+      deleteErrorKey = error.messageKey ?? 'error.generic';
+    } finally {
+      deleting = false;
     }
   }
 </script>
@@ -126,6 +168,26 @@
           <button type="button" class="btn" onclick={save} disabled={saving}>
             {saving ? t('detail.saving', lang) : t('detail.save', lang)}
           </button>
+        </div>
+
+        <div class="danger">
+          {#if confirmingDelete}
+            <DeleteConfirm
+              heading={t('detail.deleteHeading', lang)}
+              warning={t('detail.deleteWarning', lang)}
+              confirmLabel={t('detail.deleteConfirm', lang)}
+              cancelLabel={t('detail.deleteCancel', lang)}
+              busyLabel={t('detail.deleting', lang)}
+              busy={deleting}
+              error={deleteErrorKey ? t(deleteErrorKey, lang) : ''}
+              onconfirm={confirmDelete}
+              oncancel={cancelDelete}
+            />
+          {:else}
+            <button type="button" class="btn btn-danger" onclick={askToDelete}>
+              {t('detail.delete', lang)}
+            </button>
+          {/if}
         </div>
       </div>
 
@@ -250,6 +312,13 @@
   }
 
   .controls button {
+    align-self: start;
+  }
+
+  /* Set apart from the controls above it: the same panel would invite the
+     delete button to be clicked on the way past the save button. */
+  .danger {
+    display: flex;
     align-self: start;
   }
 

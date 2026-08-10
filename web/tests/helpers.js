@@ -63,6 +63,8 @@ export function stubAdminClient(overrides = {}) {
     updateTicket: vi.fn().mockResolvedValue(makeTicket({ status: 'resolved' })),
     postMessage: vi.fn().mockResolvedValue(makeMessage()),
     batchUpdate: vi.fn().mockResolvedValue({ updated: ['FLG-7X3K9Q'], failed: {} }),
+    deleteTicket: vi.fn().mockResolvedValue({ id: 'FLG-7X3K9Q', deleted: true }),
+    deleteTickets: vi.fn().mockResolvedValue({ deleted: ['FLG-7X3K9Q'], missing: [] }),
     listApps: vi.fn().mockResolvedValue([makeApp()]),
     updateApp: vi.fn().mockResolvedValue(makeApp({ autoProcessEnabled: true })),
     getSettings: vi.fn().mockResolvedValue({ globalAutoProcess: false, hermesWebhookUrl: '' }),

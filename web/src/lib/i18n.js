@@ -133,6 +133,9 @@ export const translations = {
     'list.selectedCount': 'selected',
     'list.loading': 'Loading tickets…',
     'list.refresh': 'Refresh',
+    'list.colActions': 'Actions',
+    'list.delete': 'Delete',
+    'list.deleteTicket': 'Delete ticket',
 
     // Mass operations
     'mass.heading': 'Update selected',
@@ -144,6 +147,16 @@ export const translations = {
     'mass.clear': 'Clear selection',
     'mass.done': 'Updated {n} tickets',
     'mass.partial': 'Updated {n} tickets, {failed} could not be updated',
+    'mass.delete': 'Delete selected',
+    'mass.deleteHeading': 'Delete {n} tickets?',
+    'mass.deleteHeadingOne': 'Delete this ticket?',
+    'mass.deleteWarning':
+      'This erases every selected ticket, its whole conversation and its commits from the database. It is permanent — there is no archive and no undo, and the reporters lose access to them too.',
+    'mass.deleteConfirm': 'Yes, delete permanently',
+    'mass.deleteCancel': 'Keep them',
+    'mass.deleting': 'Deleting…',
+    'mass.deleted': 'Deleted {n} tickets',
+    'mass.deletedPartial': 'Deleted {n} tickets, {missing} were already gone',
 
     // Ticket detail
     'detail.back': 'All tickets',
@@ -164,6 +177,13 @@ export const translations = {
     'detail.platform': 'Platform',
     'detail.os': 'OS',
     'detail.shippedIn': 'Shipped in',
+    'detail.delete': 'Delete ticket',
+    'detail.deleteHeading': 'Delete this ticket?',
+    'detail.deleteWarning':
+      'This erases the ticket, its whole conversation and its commits from the database. It is permanent — there is no archive and no undo, and the reporter loses access to it too.',
+    'detail.deleteConfirm': 'Yes, delete permanently',
+    'detail.deleteCancel': 'Keep the ticket',
+    'detail.deleting': 'Deleting…',
 
     // Settings
     'settings.heading': 'Settings',
@@ -250,6 +270,12 @@ export const translations = {
       'Select tickets in the list and use “Update selected” to move them in one go. This is the release sweep: tick everything that went out, set the status to Shipped, and type the version.',
     'help.admin.mass.body2':
       'The version is stored on each ticket and shown to the reporter, so “fixed in 1.5.0” needs no further message. The result says how many tickets moved and names any that did not.',
+
+    'help.admin.delete.title': 'Deleting a ticket',
+    'help.admin.delete.body1':
+      'A ticket that should never have been filed — a duplicate, a test, something posted by mistake — can be deleted outright. There is a Delete button on the ticket itself and one on every row of the list, and a whole selection can be deleted at once from the bulk bar. Deleting erases the ticket, its whole conversation and its commits from the database.',
+    'help.admin.delete.body2':
+      'It is permanent: nothing is archived, there is no undo, and the reporter loses access to it as well. That is why every delete asks first, and why nothing is sent until you answer. Deleting a selection is all-or-nothing — if it cannot finish, none of them go. To retire a ticket while keeping the record, set it to Closed instead.',
 
     'help.admin.hermes.title': 'Hermes integration',
     'help.admin.hermes.body1':
@@ -391,6 +417,9 @@ export const translations = {
     'list.selectedCount': 'ausgewählt',
     'list.loading': 'Tickets werden geladen…',
     'list.refresh': 'Aktualisieren',
+    'list.colActions': 'Aktionen',
+    'list.delete': 'Löschen',
+    'list.deleteTicket': 'Ticket löschen',
 
     // Mass operations
     'mass.heading': 'Auswahl bearbeiten',
@@ -402,6 +431,16 @@ export const translations = {
     'mass.clear': 'Auswahl aufheben',
     'mass.done': '{n} Tickets aktualisiert',
     'mass.partial': '{n} Tickets aktualisiert, {failed} konnten nicht aktualisiert werden',
+    'mass.delete': 'Auswahl löschen',
+    'mass.deleteHeading': '{n} Tickets löschen?',
+    'mass.deleteHeadingOne': 'Dieses Ticket löschen?',
+    'mass.deleteWarning':
+      'Das löscht jedes ausgewählte Ticket, den gesamten Verlauf und die zugehörigen Commits aus der Datenbank. Es ist endgültig — es gibt kein Archiv und kein Zurück, und auch die meldenden Personen haben keinen Zugriff mehr darauf.',
+    'mass.deleteConfirm': 'Ja, endgültig löschen',
+    'mass.deleteCancel': 'Behalten',
+    'mass.deleting': 'Wird gelöscht…',
+    'mass.deleted': '{n} Tickets gelöscht',
+    'mass.deletedPartial': '{n} Tickets gelöscht, {missing} waren bereits verschwunden',
 
     // Ticket detail
     'detail.back': 'Alle Tickets',
@@ -422,6 +461,13 @@ export const translations = {
     'detail.platform': 'Plattform',
     'detail.os': 'Betriebssystem',
     'detail.shippedIn': 'Ausgeliefert in',
+    'detail.delete': 'Ticket löschen',
+    'detail.deleteHeading': 'Dieses Ticket löschen?',
+    'detail.deleteWarning':
+      'Das löscht das Ticket, den gesamten Verlauf und die zugehörigen Commits aus der Datenbank. Es ist endgültig — es gibt kein Archiv und kein Zurück, und auch die meldende Person hat keinen Zugriff mehr darauf.',
+    'detail.deleteConfirm': 'Ja, endgültig löschen',
+    'detail.deleteCancel': 'Ticket behalten',
+    'detail.deleting': 'Wird gelöscht…',
 
     // Settings
     'settings.heading': 'Einstellungen',
@@ -508,6 +554,12 @@ export const translations = {
       'Wähl Tickets in der Liste aus und bearbeite sie mit „Auswahl bearbeiten“ in einem Zug. Das ist der Release-Durchgang: alles anhaken, was rausgegangen ist, den Status auf „Ausgeliefert“ setzen und die Version eintragen.',
     'help.admin.mass.body2':
       'Die Version steht danach am Ticket und ist für die meldende Person sichtbar — „behoben in 1.5.0“ braucht also keine weitere Nachricht. Das Ergebnis nennt die Zahl der geänderten Tickets und die, bei denen es nicht geklappt hat.',
+
+    'help.admin.delete.title': 'Ein Ticket löschen',
+    'help.admin.delete.body1':
+      'Ein Ticket, das es nie hätte geben sollen — ein Duplikat, ein Test, etwas versehentlich Abgeschicktes — lässt sich ganz entfernen. Es gibt einen Löschknopf am Ticket selbst und einen in jeder Zeile der Liste, und über die Sammelbearbeitung lässt sich eine ganze Auswahl auf einmal löschen. Dabei verschwinden das Ticket, der gesamte Verlauf und die zugehörigen Commits aus der Datenbank.',
+    'help.admin.delete.body2':
+      'Das ist endgültig: nichts wird archiviert, es gibt kein Zurück, und auch die meldende Person hat danach keinen Zugriff mehr. Deshalb fragt jedes Löschen vorher nach, und vor deiner Antwort wird nichts abgeschickt. Das Löschen einer Auswahl gilt ganz oder gar nicht — wenn es nicht durchläuft, bleibt alles stehen. Wer ein Ticket nur ablegen, den Vorgang aber behalten will, setzt es stattdessen auf „Geschlossen“.',
 
     'help.admin.hermes.title': 'Hermes-Anbindung',
     'help.admin.hermes.body1':

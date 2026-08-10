@@ -349,6 +349,62 @@ describe('admin client', () => {
     expect(JSON.parse(lastCall(fetchImpl).init.body).shippedVersion).toBe('');
   });
 
+  it('deletes one ticket', async () => {
+    const { fetchImpl, client } = build({
+      body: { data: { id: 'FLG-7X3K9Q', deleted: true } },
+    });
+
+    const result = await client.deleteTicket('FLG-7X3K9Q');
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe('/internal/tickets/FLG-7X3K9Q');
+    expect(init.method).toBe('DELETE');
+    expect(result).toEqual({ id: 'FLG-7X3K9Q', deleted: true });
+  });
+
+  it('escapes the id it deletes', async () => {
+    const { fetchImpl, client } = build({ body: { data: {} } });
+
+    await client.deleteTicket('a/../b');
+
+    expect(lastCall(fetchImpl).url).toBe('/internal/tickets/a%2F..%2Fb');
+  });
+
+  // A ticket that was already gone resolves rather than rejecting, so a retry
+  // is not something the UI has to treat as a failure.
+  it('resolves when the ticket was already gone', async () => {
+    const { client } = build({ body: { data: { id: 'FLG-7X3K9Q', deleted: false } } });
+
+    await expect(client.deleteTicket('FLG-7X3K9Q')).resolves.toEqual({
+      id: 'FLG-7X3K9Q',
+      deleted: false,
+    });
+  });
+
+  it('deletes a whole selection in one call', async () => {
+    const { fetchImpl, client } = build({
+      body: { data: { deleted: ['FLG-A', 'FLG-B'], missing: [] } },
+    });
+
+    const result = await client.deleteTickets(['FLG-A', 'FLG-B']);
+
+    const { url, init } = lastCall(fetchImpl);
+    expect(url).toBe('/internal/tickets/batch/delete');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ ticketIds: ['FLG-A', 'FLG-B'] });
+    expect(result.deleted).toEqual(['FLG-A', 'FLG-B']);
+  });
+
+  it('reports the IDs a bulk delete did not find', async () => {
+    const { client } = build({
+      body: { data: { deleted: ['FLG-A'], missing: ['FLG-B'] } },
+    });
+
+    const result = await client.deleteTickets(['FLG-A', 'FLG-B']);
+
+    expect(result.missing).toEqual(['FLG-B']);
+  });
+
   it('lists apps', async () => {
     const { fetchImpl, client } = build({ body: { data: [] } });
 

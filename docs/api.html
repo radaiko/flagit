@@ -245,12 +245,36 @@ curl -X POST https://flagit.example.com/api/tickets/FLG-7X3K9Q/messages \
             </tr>
             <tr>
               <td>
+                <span class="verb verb-delete">DELETE</span> <code>/internal/tickets/{id}</code>
+              </td>
+              <td>
+                Permanently remove a ticket, its conversation and its commits. There is no archive
+                and no undo. Admin only — the device token that proves who reported a ticket never
+                grants this. Idempotent: a ticket that is already gone is still a
+                <code>200</code>, with <code>"deleted": false</code> to say nothing was removed.
+              </td>
+            </tr>
+            <tr>
+              <td>
                 <span class="verb verb-post">POST</span> <code>/internal/tickets/batch</code>
               </td>
               <td>
                 Apply one status to many tickets — the release sweep. Returns
                 <code>updated</code> and a <code>failed</code> map of ID to reason code
                 (<code>not_found</code>, <code>invalid_transition</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <span class="verb verb-post">POST</span>
+                <code>/internal/tickets/batch/delete</code>
+              </td>
+              <td>
+                Permanently remove a whole selection, atomically — either all of them go or none do.
+                Takes <code>ticketIds</code>, at most 500. Returns <code>deleted</code> and
+                <code>missing</code>: an ID that names nothing is reported, not an error. A POST
+                rather than a DELETE because the request carries a body, and a body on DELETE is
+                unevenly handled by proxies.
               </td>
             </tr>
             <tr>
@@ -339,6 +363,43 @@ curl -X POST http://127.0.0.1:3000/internal/tickets/batch \
     "shippedVersion": "1.5.0",
     "force": true
   }'</code></pre>
+
+      <h3>Deleting a ticket</h3>
+      <p class="note note-danger">
+        <strong>This is the one operation with no way back.</strong> Deleting erases the ticket, its
+        whole conversation and its commit records. Nothing is archived and nothing is soft-deleted,
+        so there is no restore — take a copy of <code>/data</code> first if you might want one. Use
+        <code>closed</code>, or <code>declined</code> for work that will not be done, whenever the
+        point is to get a ticket out of the way rather than out of existence.
+      </p>
+      <pre><code>curl -X DELETE http://127.0.0.1:3000/internal/tickets/FLG-7X3K9Q \
+  -H 'X-Admin-Key: '"$FLAGIT_ADMIN_KEY"
+
+{
+  "data": { "id": "FLG-7X3K9Q", "deleted": true },
+  "message": "ticket deleted"
+}
+
+# Run it again and the answer is the same 200, because the ticket is gone
+# either way. Only "deleted" tells the two apart.
+{
+  "data": { "id": "FLG-7X3K9Q", "deleted": false },
+  "message": "ticket already deleted"
+}
+
+# A whole selection, in one transaction: all of them go or none do.
+curl -X POST http://127.0.0.1:3000/internal/tickets/batch/delete \
+  -H 'Content-Type: application/json' \
+  -H 'X-Admin-Key: '"$FLAGIT_ADMIN_KEY" \
+  -d '{"ticketIds": ["FLG-7X3K9Q", "FLG-2M8QT4"]}'
+
+{
+  "data": {
+    "deleted": ["FLG-7X3K9Q"],
+    "missing": ["FLG-2M8QT4"]
+  },
+  "message": "tickets deleted"
+}</code></pre>
 
       <h2 id="webhook">Hermes webhook</h2>
       <p>
