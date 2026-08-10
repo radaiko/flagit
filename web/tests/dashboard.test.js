@@ -9,6 +9,7 @@ import MassOperations from '../src/dashboard/MassOperations.svelte';
 import Settings from '../src/dashboard/Settings.svelte';
 import BuildInfo from '../src/dashboard/BuildInfo.svelte';
 import DashboardApp from '../src/dashboard/App.svelte';
+import { createAdminClient } from '../src/lib/api.js';
 import { stubAdminClient, makeTicket, makeMessage, makeApp, apiError } from './helpers.js';
 
 describe('Login', () => {
@@ -949,5 +950,187 @@ describe('dashboard App', () => {
     await userEvent.click(within(nav).getByRole('button', { name: 'Settings' }));
 
     expect(within(nav).getByRole('button', { name: 'Settings' })).toHaveClass('current');
+  });
+});
+
+/*
+ * The dashboard driven by the real client over the real response envelopes,
+ * rather than by a stub standing in for both.
+ *
+ * Every other test on this page hands a component a stubbed client, which pins
+ * what the UI does with tickets it was given but never that the client can get
+ * tickets out of what the server actually sends. The two shapes below are not
+ * the same shape, and that asymmetry is the whole reason this exists: the list
+ * arrives wrapped twice, as `{"data": {"tickets": [...]}}` with the paging
+ * metadata beside it, and the app list arrives wrapped once, as a bare array in
+ * `{"data": [...]}`. A client that read `data` and stopped would hand the table
+ * a paging object to iterate, and a dashboard reporting nothing is exactly what
+ * that looks like from the outside.
+ *
+ * So the bodies here are transcribed from the deployed internal API rather than
+ * built by a helper: a fixture factory that drifts with the client it feeds
+ * cannot catch the client and the server disagreeing.
+ */
+describe('dashboard over the real API envelopes', () => {
+  const TICKET = {
+    id: 'FLG-B6HNGX',
+    type: 'bug',
+    title: 'Crash when attaching a screenshot',
+    body: 'Picking an image from the library closes the app.',
+    status: 'open',
+    appName: 'flagit',
+    appVersion: '1.4.2',
+    os: 'iOS 18.2',
+    platform: 'ios',
+    deviceModel: 'iPhone 15',
+    shippedVersion: '',
+    createdAt: '2026-08-10T09:00:00Z',
+    updatedAt: '2026-08-10T09:30:00Z',
+  };
+
+  /** `GET /internal/tickets` — the page, wrapped in the envelope. */
+  const TICKETS_BODY = {
+    data: { tickets: [TICKET], total: 1, limit: 100, offset: 0, hasMore: false },
+  };
+
+  /** `GET /internal/apps` — a bare array, wrapped in the envelope. */
+  const APPS_BODY = {
+    data: [{ name: 'flagit', autoProcessEnabled: false, createdAt: '2026-08-01T08:00:00Z' }],
+  };
+
+  /** `GET /internal/tickets/{id}` — one flat ticket, conversation included. */
+  const DETAIL_BODY = {
+    data: {
+      ...TICKET,
+      messages: [
+        {
+          id: 1,
+          ticketId: 'FLG-B6HNGX',
+          body: 'Reproduced on 1.4.2, looking into it.',
+          role: 'agent',
+          createdAt: '2026-08-10T09:30:00Z',
+        },
+      ],
+      commits: [],
+    },
+  };
+
+  const VERSION_BODY = { data: { commit: 'f110ac3', short: 'f110ac3', known: true } };
+
+  /**
+   * A fetch that answers the internal API's routes and nothing else.
+   *
+   * Unknown paths get the server's own JSON 404 rather than a thrown error, so
+   * a request going somewhere unintended surfaces as the dashboard reporting
+   * it — the way it would in a browser — instead of as a stub blowing up.
+   */
+  function serveInternalApi() {
+    const bodies = {
+      '/internal/tickets': TICKETS_BODY,
+      '/internal/apps': APPS_BODY,
+      '/internal/tickets/FLG-B6HNGX': DETAIL_BODY,
+      '/internal/version': VERSION_BODY,
+      '/internal/settings': { data: { globalAutoProcess: false, hermesWebhookUrl: '' } },
+    };
+    return vi.fn(async (url) => {
+      const path = String(url).split('?')[0];
+      const body = bodies[path];
+      if (!body) {
+        return { ok: false, status: 404, json: async () => ({ error: 'no such endpoint' }) };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    });
+  }
+
+  const realClient = (fetchImpl) => createAdminClient({ adminKey: 'admin-key', fetchImpl });
+
+  it('renders the ticket the API sent, through the client that parsed it', async () => {
+    const fetchImpl = serveInternalApi();
+    render(DashboardApp, { props: { client: realClient(fetchImpl), lang: 'en' } });
+
+    expect(await screen.findByText('FLG-B6HNGX')).toBeInTheDocument();
+    expect(screen.getByText('Crash when attaching a screenshot')).toBeInTheDocument();
+    expect(screen.queryByText(/No tickets yet/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  /*
+   * The paging envelope is the one that bites, so this pins the metadata beside
+   * the tickets as well: read the wrapper wrong and `tickets` is undefined, and
+   * an empty table is indistinguishable from an empty tracker.
+   */
+  it('reads the page out of the double-wrapped ticket envelope', async () => {
+    const fetchImpl = serveInternalApi();
+
+    const page = await realClient(fetchImpl).listTicketPage();
+
+    expect(page.tickets.map((ticket) => ticket.id)).toEqual(['FLG-B6HNGX']);
+    expect(page).toMatchObject({ total: 1, limit: 100, offset: 0, hasMore: false });
+  });
+
+  it('fills the app filter from the bare-array apps envelope', async () => {
+    const fetchImpl = serveInternalApi();
+    render(TicketList, { props: { client: realClient(fetchImpl), lang: 'en' } });
+
+    await screen.findByText('FLG-B6HNGX');
+    const appFilter = screen.getByLabelText('App');
+    expect(within(appFilter).getByRole('option', { name: 'flagit' })).toBeInTheDocument();
+  });
+
+  it('opens the ticket detail from the flat ticket envelope', async () => {
+    const fetchImpl = serveInternalApi();
+    render(TicketDetail, {
+      props: { client: realClient(fetchImpl), ticketId: 'FLG-B6HNGX', lang: 'en' },
+    });
+
+    expect(
+      await screen.findByRole('heading', { name: 'Crash when attaching a screenshot' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Picking an image from the library closes the app.')).toBeInTheDocument();
+    expect(screen.getByText('Reproduced on 1.4.2, looking into it.')).toBeInTheDocument();
+    expect(screen.getByText('iPhone 15')).toBeInTheDocument();
+  });
+
+  /*
+   * Where the dashboard asks is as much of the contract as what it asks for.
+   * These paths are absolute from the origin root, which is what makes the
+   * listener's own root — and a proxy in front of it that rewrites nothing —
+   * the arrangement the client is built for. A hop that mounts the dashboard
+   * under a prefix instead takes these requests somewhere else, and what comes
+   * back is a page rather than an envelope.
+   */
+  it('asks the internal API at the origin root', async () => {
+    const fetchImpl = serveInternalApi();
+    render(TicketList, { props: { client: realClient(fetchImpl), lang: 'en' } });
+    await screen.findByText('FLG-B6HNGX');
+
+    const paths = fetchImpl.mock.calls.map(([url]) => String(url));
+    expect(paths).toContain('/internal/tickets');
+    expect(paths).toContain('/internal/apps');
+    expect(fetchImpl.mock.calls.every(([, init]) => init.headers['X-Admin-Key'] === 'admin-key')).toBe(
+      true,
+    );
+  });
+
+  /*
+   * And the other half of the contract: served a page where an envelope was
+   * promised — a misrouted listener, a proxy answering with its own 404 — the
+   * dashboard has to say so. It must never quietly report an empty tracker,
+   * which is the failure that hid a full database for as long as it did.
+   */
+  it('reports a page where the envelope should be, instead of an empty tracker', async () => {
+    const html = '<!doctype html>\n<html lang="en"><body><div id="app"></div></body></html>';
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError(`Unexpected token < in JSON at position 0: ${html.slice(0, 1)}`);
+      },
+    }));
+    render(TicketList, { props: { client: realClient(fetchImpl), lang: 'en' } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not read/i);
+    expect(screen.queryByText(/No tickets yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText('FLG-B6HNGX')).toBeNull();
   });
 });
