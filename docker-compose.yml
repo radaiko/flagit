@@ -48,6 +48,14 @@ services:
       # Left empty, Flagit falls back to its old behaviour: it generates a key
       # and prints it once to the container log.
       FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY}
+      # Stand the admin key down on port 3000 only. That listener is published
+      # to nothing and has no domain, so the only way to it is the Tailscale
+      # sidecar below and the tailnet has already authenticated whoever
+      # arrives — a second credential the sidecar cannot present would just
+      # lock the dashboard shut. The public API on 8080 is untouched by this
+      # and still requires its own credentials. Set it to false to put the key
+      # back, and do so before publishing 3000 anywhere.
+      FLAGIT_ADMIN_DISABLE_AUTH: "${FLAGIT_ADMIN_DISABLE_AUTH:-true}"
       # Git revision this deployment is running, shown in the admin dashboard
       # header so an operator can confirm what actually landed. Optional, and
       # deliberately so: it only overrides the revision already baked into the
