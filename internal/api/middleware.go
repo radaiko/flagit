@@ -72,6 +72,27 @@ func (s *Server) AdminKeyAuth(next http.Handler) http.Handler {
 	})
 }
 
+// internalAuth guards the routes of the admin listener: the admin key, unless
+// the operator declared the listener itself the credential.
+//
+// The decision is made per request rather than when the router is built, so
+// the field means what it says at the moment it is read and a Server can never
+// be left holding a stale middleware chain.
+//
+// This is the only place AdminAuthDisabled is honoured. AdminKeyAuth stays a
+// hard gate wherever else it is mounted — most importantly the public
+// listener, which never serves these routes at all.
+func (s *Server) internalAuth(next http.Handler) http.Handler {
+	guarded := s.AdminKeyAuth(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.AdminAuthDisabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+		guarded.ServeHTTP(w, r)
+	})
+}
+
 // validAdminKey hashes the presented key and compares it against the stored
 // hash in constant time, so neither the key nor its hash can be recovered by
 // timing repeated guesses.

@@ -22,7 +22,21 @@ type Server struct {
 	// AdminKeyHash is the SHA-256 of the admin key. The key itself is never
 	// held in memory or on disk.
 	AdminKeyHash string
-	Logger       *slog.Logger
+
+	// AdminAuthDisabled drops the admin-key requirement from the routes
+	// InternalRouter serves, and from nothing else.
+	//
+	// It exists for the one deployment shape where the network already is the
+	// credential: the internal listener is bound to no host interface, has no
+	// domain, and is reachable only through the Tailscale sidecar, so every
+	// caller has already been authenticated by the tailnet. AdminKeyAuth
+	// itself is untouched by this field — the public listener, and anything
+	// else mounted behind that middleware, keeps rejecting as before.
+	//
+	// False is the only safe default, so an unset value must stay false.
+	AdminAuthDisabled bool
+
+	Logger *slog.Logger
 
 	// Commit is the revision this build was deployed from. It is served only
 	// on the internal router, so it never reaches a public API response.

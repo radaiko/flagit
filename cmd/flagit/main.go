@@ -50,9 +50,14 @@ type config struct {
 	dbPath    string
 	adminKey  string
 	publicURL string
-	dev       bool
-	viteURL   string
-	logLevel  string
+	// adminAuthDisabled drops the admin key from the internal listener only —
+	// the one on adminPort, which is published to nothing and reached through
+	// the Tailscale sidecar. The public listener on port is not affected by
+	// this and cannot be.
+	adminAuthDisabled bool
+	dev               bool
+	viteURL           string
+	logLevel          string
 	// commit is the revision this container was deployed from. Empty falls
 	// back to whatever the linker stamped in at build time.
 	commit string
@@ -70,6 +75,8 @@ func parseFlags(args []string, out io.Writer) (*config, error) {
 	fs.StringVar(&cfg.dbPath, "db-path", env("FLAGIT_DB_PATH", "./data/flagit.db"), "path to the SQLite database")
 	fs.StringVar(&cfg.adminKey, "admin-key", env("FLAGIT_ADMIN_KEY", ""), "admin API key (env FLAGIT_ADMIN_KEY); generated and printed on first start if unset")
 	fs.StringVar(&cfg.publicURL, "public-url", env("FLAGIT_PUBLIC_URL", ""), "externally reachable base URL, used in webhook payloads (env FLAGIT_PUBLIC_URL)")
+	fs.BoolVar(&cfg.adminAuthDisabled, "admin-disable-auth", envBool("FLAGIT_ADMIN_DISABLE_AUTH", false),
+		"serve the internal API and admin dashboard on -admin-port without the admin key (env FLAGIT_ADMIN_DISABLE_AUTH); only safe when that port is unpublished and reachable through a private network such as Tailscale — the public API on -port is unaffected and always requires its own credentials")
 	fs.BoolVar(&cfg.dev, "dev", envBool("FLAGIT_DEV", false), "dev mode: proxy the frontend to the Vite dev server instead of serving embedded files")
 	fs.StringVar(&cfg.viteURL, "vite-url", env("FLAGIT_VITE_URL", overlay.DefaultViteURL), "Vite dev server URL, used with -dev")
 	fs.StringVar(&cfg.logLevel, "log-level", env("FLAGIT_LOG_LEVEL", "info"), "log level: debug, info, warn or error")
@@ -132,6 +139,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	srv := api.NewServer(svc, adminKeyHash, logger)
 	srv.Commit = version.Resolve(cfg.commit)
+	// Scoped by construction: the field is read by InternalRouter and by
+	// nothing else, so this cannot reach the public router below even by
+	// mistake. The admin key is still resolved and still stored — turning the
+	// switch back off restores the gate without any other change.
+	srv.AdminAuthDisabled = cfg.adminAuthDisabled
+	if cfg.adminAuthDisabled {
+		// Loud, once, at startup: an instance running its admin API open is
+		// not something anyone should have to read the config to discover.
+		logger.Warn("admin listener authentication disabled",
+			"adminPort", cfg.adminPort,
+			"note", "publish this port to nothing; it must stay reachable only over the private network")
+	}
 
 	if err := mountFrontend(srv, cfg, logger); err != nil {
 		return err

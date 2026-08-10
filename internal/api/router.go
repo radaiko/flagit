@@ -79,8 +79,10 @@ func (s *Server) overlayOrJSON404() http.Handler {
 }
 
 // InternalRouter serves /internal/* for Hermes and the admin dashboard. Every
-// route below /internal requires the admin key; only /healthz is open, so a
-// container healthcheck does not need credentials.
+// route below /internal requires the admin key, unless AdminAuthDisabled says
+// the listener is trusted on its own; /healthz and /internal/auth are open, so
+// a container healthcheck needs no credentials and the dashboard can find out
+// whether to ask for one.
 func (s *Server) InternalRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -88,9 +90,12 @@ func (s *Server) InternalRouter() http.Handler {
 	s.useJSONFallbacks(r)
 
 	r.Get("/healthz", s.handleHealth)
+	// Registered outside the guarded group on purpose: a client that cannot
+	// authenticate is exactly the one that needs this answer.
+	r.Get("/internal/auth", s.handleAuthMode)
 
 	r.Route("/internal", func(r chi.Router) {
-		r.Use(s.AdminKeyAuth)
+		r.Use(s.internalAuth)
 
 		r.Get("/poll", s.handlePoll)
 		r.Get("/tickets", s.handleListTickets)

@@ -344,6 +344,26 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, app, "app updated")
 }
 
+// authModeResponse tells the dashboard whether this listener wants a key.
+//
+// One boolean, and deliberately nothing else: it is the only field the SPA
+// needs to decide between its sign-in screen and going straight in, and it is
+// the only thing that can be said here without saying something about the
+// credential itself. No hash, no hint, no length.
+type authModeResponse struct {
+	AdminKeyRequired bool `json:"adminKeyRequired"`
+}
+
+// handleAuthMode reports whether the admin key is required on this listener.
+// It is the one route below /internal that answers without a key — a caller
+// that cannot authenticate is precisely the one asking — and it exists only on
+// the internal router, so the public listener never answers it at all.
+func (s *Server) handleAuthMode(w http.ResponseWriter, _ *http.Request) {
+	s.writeJSON(w, http.StatusOK, authModeResponse{
+		AdminKeyRequired: !s.AdminAuthDisabled,
+	}, "")
+}
+
 // versionResponse tells the admin dashboard which build is running. Short is
 // the abbreviation to display; Commit is the full SHA to copy or paste into a
 // git command. Known is false when neither the deployment nor the build

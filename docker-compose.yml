@@ -49,11 +49,14 @@ services:
       # and prints it once to the container log.
       FLAGIT_ADMIN_KEY: ${FLAGIT_ADMIN_KEY}
       # Git revision this deployment is running, shown in the admin dashboard
-      # footer so an operator can confirm what actually landed. Optional, and
+      # header so an operator can confirm what actually landed. Optional, and
       # deliberately so: it only overrides the revision already baked into the
       # image at build time. Set FLAGIT_COMMIT by hand to pin the value;
       # otherwise SOURCE_COMMIT is used when the platform interpolates it here,
       # and an empty value simply leaves the image's own answer standing.
+      # Only a hex object name is accepted. Anything else — most likely a
+      # variable the platform never substituted — is refused at startup with a
+      # warning in the container log, and the image's own revision stands.
       FLAGIT_COMMIT: ${FLAGIT_COMMIT:-${SOURCE_COMMIT:-}}
 
   # Tailscale node dedicated to the admin dashboard. It is a separate identity
