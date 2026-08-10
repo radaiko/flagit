@@ -93,6 +93,8 @@ export const translations = {
     'error.forbidden':
       'That ticket belongs to another device. Only the device that filed a ticket can open it.',
     'error.network': 'Could not reach the server. Check your connection and try again.',
+    'error.malformedResponse':
+      'The server answered with something this app could not read. It may be misconfigured — check that the API is reachable at this address.',
     'error.generic': 'Something went wrong. Try again.',
 
     // Dashboard chrome
@@ -346,6 +348,8 @@ export const translations = {
     'error.forbidden':
       'Dieses Ticket gehört zu einem anderen Gerät. Nur das Gerät, das es gemeldet hat, kann es öffnen.',
     'error.network': 'Der Server ist nicht erreichbar. Prüf deine Verbindung und versuch es erneut.',
+    'error.malformedResponse':
+      'Der Server hat etwas geantwortet, das diese App nicht lesen kann. Möglicherweise ist er falsch konfiguriert — prüf, ob die API unter dieser Adresse erreichbar ist.',
     'error.generic': 'Da ist etwas schiefgelaufen. Versuch es erneut.',
 
     // Dashboard chrome

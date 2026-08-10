@@ -2,12 +2,22 @@ import { describe, it, expect, vi } from 'vitest';
 import { ApiError, createPublicClient, createAdminClient, fetchAuthMode } from '../src/lib/api.js';
 import { makeTicket } from './helpers.js';
 
-/** A fetch stub that records its calls and returns a canned response. */
-function stubFetch({ ok = true, status = 200, body = { data: null } } = {}) {
+/**
+ * A fetch stub that records its calls and returns a canned response.
+ *
+ * `notJson` stands in for a body no envelope can be read out of — an HTML error
+ * page from a proxy, or a misrouted listener answering with a SPA — which is a
+ * `json()` that rejects, exactly as the browser's does.
+ */
+function stubFetch({ ok = true, status = 200, body = { data: null }, notJson = false } = {}) {
   return vi.fn().mockResolvedValue({
     ok,
     status,
-    json: async () => body,
+    json: notJson
+      ? async () => {
+          throw new SyntaxError('Unexpected token < in JSON at position 0');
+        }
+      : async () => body,
   });
 }
 
@@ -436,5 +446,28 @@ describe('ticket paging', () => {
 
     expect(page.tickets).toEqual([]);
     expect(page.total).toBe(0);
+  });
+
+  /*
+   * The failure this pins actually happened, in production, and the reason it
+   * went unnoticed for so long is the whole point of the test.
+   *
+   * A misrouted admin listener answered `GET /internal/tickets` with the
+   * dashboard's own HTML — 200, `text/html`, no error anywhere. The client
+   * parsed it as "no JSON", read `data` off nothing, and handed back an empty
+   * page. The dashboard rendered "No tickets yet" over a database with tickets
+   * in it, and said nothing that would make anyone look at the routing.
+   *
+   * An empty list is a claim about the database. The client may only make it
+   * when the server actually said so.
+   */
+  it('refuses to read an empty list out of a body that is not the envelope', async () => {
+    const { client } = build({ notJson: true });
+
+    await expect(client.listTicketPage()).rejects.toMatchObject({
+      name: 'ApiError',
+      messageKey: 'error.malformedResponse',
+      status: 200,
+    });
   });
 });

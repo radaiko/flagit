@@ -96,6 +96,25 @@ describe('TicketList', () => {
     expect(await screen.findByText(/No tickets yet/)).toBeInTheDocument();
   });
 
+  /*
+   * "No tickets yet" is a statement about the database, and this is the case
+   * where it was a lie: a misrouted admin listener answered the ticket query
+   * with the dashboard's own HTML, the client read no tickets out of it, and
+   * the table said the tracker was empty while the tickets sat in SQLite.
+   *
+   * Whatever else this screen does with a broken listener, it must not claim
+   * to have looked.
+   */
+  it('reports a listener it cannot read, rather than calling the tracker empty', async () => {
+    const client = stubAdminClient({
+      listTickets: vi.fn().mockRejectedValue(apiError('error.malformedResponse', 200)),
+    });
+    render(TicketList, { props: { client, lang: 'en' } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not read/i);
+    expect(screen.queryByText(/No tickets yet/)).not.toBeInTheDocument();
+  });
+
   it('distinguishes an empty result from an empty filter', async () => {
     const client = stubAdminClient({
       listTickets: vi.fn().mockResolvedValue([makeTicket({ appName: 'notes' })]),

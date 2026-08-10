@@ -78,6 +78,23 @@ func (s *Server) overlayOrJSON404() http.Handler {
 	})
 }
 
+// dashboardOrJSON404 is overlayOrJSON404 for the internal listener: the admin
+// SPA for frontend routes, and a JSON 404 for an API path no route claimed.
+//
+// The reserved check is what keeps the two apart. Without it this catch-all
+// would answer a misspelled or withdrawn /internal endpoint with a page, and an
+// API client — the dashboard itself included — cannot tell a page from an empty
+// result. A wrong path must stay wrong out loud.
+func (s *Server) dashboardOrJSON404() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isReservedPath(r.URL.Path) {
+			s.writeError(w, http.StatusNotFound, "no such endpoint")
+			return
+		}
+		s.Dashboard.ServeHTTP(w, r)
+	})
+}
+
 // InternalRouter serves /internal/* for Hermes and the admin dashboard. Every
 // route below /internal requires the admin key, unless AdminAuthDisabled says
 // the listener is trusted on its own; /healthz and /internal/auth are open, so
@@ -123,6 +140,14 @@ func (s *Server) InternalRouter() http.Handler {
 		r.Handle("/assets/*", s.Overlay)
 		r.Handle("/internal/admin", s.Dashboard)
 		r.Handle("/internal/admin/*", s.Dashboard)
+		// This listener is reached through a proxy that gives it a hostname of
+		// its own, so what an operator opens is a root, not /internal/admin.
+		// Serving the dashboard there too is what lets that proxy stay a plain
+		// pass-through: the alternative — a rule rewriting / to /internal/admin
+		// — rewrites the dashboard's own API calls with it, and answering
+		// /internal/tickets with the dashboard's HTML makes a full database
+		// read as an empty one.
+		r.Handle("/*", s.dashboardOrJSON404())
 	}
 	return r
 }

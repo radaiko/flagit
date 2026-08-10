@@ -56,18 +56,54 @@ async function request(path, { method = 'GET', body, headers = {}, fetchImpl } =
   const payload = await readJson(response);
 
   if (!response.ok) {
-    throw new ApiError(keyForStatus(response.status), response.status, payload?.error ?? '');
+    throw new ApiError(
+      keyForStatus(response.status),
+      response.status,
+      payload === NOT_JSON ? '' : (payload?.error ?? ''),
+    );
   }
-  return payload?.data ?? null;
+
+  /*
+   * A success has to carry the envelope, and this is where that is enforced.
+   *
+   * Every endpoint answers `{"data": …}`; nothing but a wrong hop can produce a
+   * 2xx that does not parse. Returning "no data" for one reads to every caller
+   * as a server that had nothing to give — an empty ticket list, a ticket with
+   * no messages — which is a claim about the database made on the strength of a
+   * body we could not read. That is how a misrouted admin listener serving its
+   * own HTML turned into "No tickets yet" on a dashboard with tickets behind
+   * it, and stayed invisible.
+   *
+   * So it fails instead, loudly, with the status attached: whatever answered,
+   * it was not this API.
+   */
+  if (payload === NOT_JSON && !isBodiless(response.status)) {
+    throw new ApiError('error.malformedResponse', response.status, 'response body was not JSON');
+  }
+  return payload === NOT_JSON ? null : (payload?.data ?? null);
 }
+
+/**
+ * Whether the status is one HTTP defines as carrying no body, and so the one
+ * case where nothing to parse is the correct answer rather than a wrong hop.
+ */
+function isBodiless(status) {
+  return status === 204 || status === 205;
+}
+
+/**
+ * Returned by readJson for a body that is not JSON at all.
+ *
+ * A sentinel rather than null, because a literal `null` body is valid JSON and
+ * must stay distinguishable from one that could not be parsed.
+ */
+const NOT_JSON = Symbol('not json');
 
 async function readJson(response) {
   try {
     return await response.json();
   } catch {
-    // A body that is empty or not JSON is only a problem when we needed it;
-    // callers treat a null payload as "no data".
-    return null;
+    return NOT_JSON;
   }
 }
 
