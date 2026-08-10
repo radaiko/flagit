@@ -114,6 +114,28 @@ export function createPublicClient({ deviceToken, baseUrl = '', fetchImpl }) {
 /* ------------------------------------------------------------- admin API -- */
 
 /**
+ * Ask the admin listener whether the dashboard has to sign in with a key.
+ *
+ * Fails closed, deliberately. Only an explicit `adminKeyRequired: false` from
+ * a listener that actually serves this route means "come straight in". A 404
+ * (the public listener does not route it at all), a network failure, a body of
+ * some other shape, a value that is not the boolean false — all of them read
+ * as "a key is required". A probe going wrong must never be the thing that
+ * takes the sign-in screen away.
+ *
+ * @param {{baseUrl?: string, fetchImpl?: typeof fetch}} [config]
+ * @returns {Promise<{adminKeyRequired: boolean}>}
+ */
+export async function fetchAuthMode({ baseUrl = '', fetchImpl } = {}) {
+  try {
+    const mode = await request(`${baseUrl}/internal/auth`, { fetchImpl });
+    return { adminKeyRequired: mode?.adminKeyRequired !== false };
+  } catch {
+    return { adminKeyRequired: true };
+  }
+}
+
+/**
  * Client for the internal API, authorised by the admin key.
  *
  * @param {{adminKey: string, baseUrl?: string, fetchImpl?: typeof fetch}} config

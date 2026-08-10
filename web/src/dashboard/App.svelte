@@ -7,14 +7,14 @@
    * which is the right default for a key that grants full access to every
    * ticket in the system.
    */
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     t,
     detectLanguage,
     rememberLanguage,
     applyDocumentLanguage,
   } from '../lib/i18n.js';
-  import { createAdminClient } from '../lib/api.js';
+  import { createAdminClient, fetchAuthMode } from '../lib/api.js';
   import { stripQueryParam } from '../lib/device.js';
   import LanguageToggle from '../lib/LanguageToggle.svelte';
   import Login from './Login.svelte';
@@ -31,14 +31,45 @@
     lang: initialLang,
     view: initialView = 'tickets',
     clientFactory = createAdminClient,
+    authMode = fetchAuthMode,
   } = $props();
 
   // These props seed the initial view; they are not bindings, so they are
   // read once and deliberately not tracked afterwards.
   let lang = $state(untrack(() => initialLang) ?? detectLanguage());
-  let client = $state(untrack(() => providedClient) ?? restoreSession());
+  const initialClient = untrack(() => providedClient) ?? restoreSession();
+  let client = $state(initialClient);
   let view = $state(untrack(() => initialView));
   let openTicketId = $state('');
+
+  // A session with no key behind it: the listener itself is the credential.
+  // There is nothing to sign out of, so the button is not offered.
+  let keyless = $state(false);
+  // Only until the probe answers. It is one round trip on a listener we are
+  // already talking to, so this renders nothing rather than a spinner that
+  // would do little but flash.
+  let probing = $state(!initialClient);
+
+  // Some listeners are trusted on their own — the admin dashboard reachable
+  // only over the tailnet is — and then there is no key to ask anyone for.
+  // The server is the only thing that can say so, and it has to say it
+  // explicitly: fetchAuthMode reports "key required" for every other outcome,
+  // including a listener that does not answer this route at all.
+  onMount(async () => {
+    if (!probing) return;
+    try {
+      const mode = await authMode();
+      if (mode?.adminKeyRequired === false) {
+        client = clientFactory({ adminKey: '' });
+        keyless = true;
+      }
+    } catch {
+      // fetchAuthMode fails closed on its own; a probe passed in as a prop
+      // might not, and a rejected probe still means "keep asking for a key".
+    } finally {
+      probing = false;
+    }
+  });
 
   function restoreSession() {
     const key = readStoredKey();
@@ -80,6 +111,7 @@
       // Nothing to clear.
     }
     client = null;
+    keyless = false;
     view = 'tickets';
     openTicketId = '';
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ApiError, createPublicClient, createAdminClient } from '../src/lib/api.js';
+import { ApiError, createPublicClient, createAdminClient, fetchAuthMode } from '../src/lib/api.js';
 import { makeTicket } from './helpers.js';
 
 /** A fetch stub that records its calls and returns a canned response. */
