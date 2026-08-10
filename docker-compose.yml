@@ -29,11 +29,21 @@ services:
     restart: unless-stopped
 
     # `expose`, not `ports`: reachable from the compose network (Coolify's proxy,
-    # the Tailscale sidecar) but never bound to a host interface. Coolify routes
-    # the domain to 8080; 3000 stays unrouted.
+    # the Tailscale sidecar) but never bound to a host interface.
+    #
+    # Only 8080 is listed, and deliberately: `expose` is what Coolify's Traefik
+    # reads when it decides which container port the domain resolves to, and a
+    # second candidate is how the admin listener ends up answering the public
+    # domain. It changes nothing for the Tailscale sidecar — `expose` gates
+    # nothing on a compose network, so the sidecar still reaches flagit:3000.
     expose:
       - "8080"
-      - "3000"
+
+    # Say it outright as well, so the routing does not depend on Traefik
+    # inferring the port from `expose`. The service name is Coolify's generated
+    # one for this deployment; it has to match or the label is ignored.
+    labels:
+      traefik.http.services.https-0-rax61448voi481y8nirryfa2-flagit.loadbalancer.server.port: "8080"
 
     volumes:
       # SQLite lives here. Mount this as a persistent volume in Coolify or every
